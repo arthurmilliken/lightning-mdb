@@ -136,6 +136,31 @@ export const EACCES = 13;
 /** the environment was locked by another process. */
 export const EAGAIN = 11;
 
+export enum op {
+  FIRST = 0 /** Position at first key/data item */,
+  FIRST_DUP /** Position at first data item of current key. Only for #MDB_DUPSORT */,
+  GET_BOTH /** Position at key/data pair. Only for #MDB_DUPSORT */,
+  GET_BOTH_RANGE /** position at key, nearest data. Only for #DUPSORT */,
+  GET_CURRENT /** Return key/data at current cursor position */,
+  GET_MULTIPLE /** Return up to a page of duplicate data items from current cursor position.
+                   Move cursor to prepare for #MDB_NEXT_MULTIPLE. Only for #MDB_DUPFIXED */,
+  LAST /** Position at last key/data item */,
+  LAST_DUP /** Position at last data item of current key. Only for #MDB_DUPSORT */,
+  NEXT /** Position at next data item */,
+  NEXT_DUP /** Position at next data item of current key. Only for #MDB_DUPSORT */,
+  NEXT_MULTIPLE /** Return up to a page of duplicate data items from next cursor position.
+                    Move cursor to prepare for #MDB_NEXT_MULTIPLE. Only for #MDB_DUPFIXED */,
+  NEXT_NODUP /** Position at first data item of next key */,
+  PREV /** Position at previous data item */,
+  PREV_DUP /** Position at previous data item of current key. Only for #MDB_DUPSORT */,
+  PREV_NODUP /** Position at last data item of previous key */,
+  SET /** Position at specified key */,
+  SET_KEY /** Position at specified key, return key + data */,
+  SET_RANGE /** Position at first key greater than or equal to specified key. */,
+  PREV_MULTIPLE /** Position at previous page and return up to a page of duplicate data items.
+                    Only for #MDB_DUPFIXED */,
+}
+
 let libSuffix = "";
 switch (Deno.build.os) {
   case "windows":
@@ -165,11 +190,11 @@ const dylib = Deno.dlopen(libName, {
     result: "i32",
   },
   ffi_env_open: {
-    parameters: ["pointer", "pointer", "usize", "u32", "u32"],
+    parameters: ["pointer", "pointer", "u32", "u32"],
     result: "i32",
   },
   ffi_env_copy: {
-    parameters: ["pointer", "pointer", "usize"],
+    parameters: ["pointer", "pointer"],
     result: "i32",
   },
   ffi_env_copyfd: {
@@ -177,7 +202,7 @@ const dylib = Deno.dlopen(libName, {
     result: "i32",
   },
   ffi_env_copy2: {
-    parameters: ["pointer", "pointer", "usize", "u32"],
+    parameters: ["pointer", "pointer", "u32"],
     result: "i32",
   },
   ffi_env_copyfd2: {
@@ -228,229 +253,106 @@ const dylib = Deno.dlopen(libName, {
     parameters: ["pointer", "pointer"],
     result: "i32",
   },
+  ffi_env_set_maxdbs: {
+    parameters: ["pointer", "u32"],
+    result: "i32",
+  },
+  ffi_env_get_maxkeysize: {
+    parameters: ["pointer"],
+    result: "i32",
+  },
+  ffi_env_set_userctx: {
+    parameters: ["pointer", "pointer"],
+    result: "i32",
+  },
+  ffi_env_get_userctx: {
+    parameters: ["pointer"],
+    result: "pointer",
+  },
+  ffi_txn_begin: {
+    parameters: ["pointer", "pointer", "u32", "pointer"],
+    result: "i32",
+  },
+  ffi_txn_env: {
+    parameters: ["pointer"],
+    result: "u64",
+  },
+  ffi_txn_id: {
+    parameters: ["pointer"],
+    result: "usize",
+  },
+  ffi_txn_commit: {
+    parameters: ["pointer"],
+    result: "i32",
+  },
+  ffi_txn_abort: {
+    parameters: ["pointer"],
+    result: "void",
+  },
+  ffi_dbi_open: {
+    parameters: ["pointer", "pointer", "u32", "pointer"],
+    result: "i32",
+  },
+  ffi_stat: {
+    parameters: ["pointer", "u32", "pointer"],
+    result: "i32",
+  },
+  ffi_dbi_flags: {
+    parameters: ["pointer", "u32", "pointer"],
+    result: "i32",
+  },
+  ffi_dbi_close: {
+    parameters: ["pointer", "u32"],
+    result: "void",
+  },
+  ffi_drop: {
+    parameters: ["pointer", "u32", "u32"],
+    result: "i32",
+  },
+  ffi_get: {
+    parameters: ["pointer", "u32", "pointer", "pointer"],
+    result: "i32",
+  },
+  ffi_put: {
+    parameters: ["pointer", "u32", "pointer", "pointer", "u32"],
+    result: "i32",
+  },
+  ffi_del: {
+    parameters: ["pointer", "u32", "pointer", "pointer"],
+    result: "i32",
+  },
+  ffi_cursor_open: {
+    parameters: ["pointer", "u32", "pointer"],
+    result: "i32",
+  },
+  ffi_cursor_close: {
+    parameters: ["pointer"],
+    result: "void",
+  },
+  ffi_cursor_renew: {
+    parameters: ["pointer", "pointer"],
+    result: "i32",
+  },
+  ffi_cursor_txn: {
+    parameters: ["pointer"],
+    result: "u64",
+  },
+  ffi_cursor_dbi: {
+    parameters: ["pointer"],
+    result: "i32",
+  },
+  ffi_cursor_get: {
+    parameters: ["pointer", "pointer", "pointer", "u32"],
+    result: "i32",
+  },
+  ffi_cursor_put: {
+    parameters: ["pointer", "pointer", "pointer", "u32"],
+    result: "i32",
+  },
+  ffi_cursor_del: {
+    parameters: ["pointer", "u32"],
+    result: "i32",
+  },
 });
 
-export const lib = dylib.symbols;
-
-//////////////////////////////////////////////////////////////////////////
-
-// ffi_version()
-
-const major = new Int32Array(1);
-const minor = new Int32Array(1);
-const patch = new Int32Array(1);
-
-const version = lib.ffi_version(major, minor, patch);
-
-log.info({
-  version: new Deno.UnsafePointerView(version).getCString(),
-  major: major[0],
-  minor: minor[0],
-  patch: patch[0],
-});
-
-// ffi_strerror()
-
-const strerror = lib.ffi_strerror(2);
-log.info({
-  strerror: new Deno.UnsafePointerView(strerror).getCString(),
-});
-
-const geterror = (rc: number): string => {
-  return new Deno.UnsafePointerView(lib.ffi_strerror(rc)).getCString();
-};
-
-const iferror = (rc: number): string | undefined =>
-  rc ? geterror(rc) : undefined;
-
-const fenv = new BigUint64Array(1);
-let rc = lib.ffi_env_create(fenv);
-
-log.info({
-  m: "after ffi_env_create()",
-  rc,
-  rm: iferror(rc),
-  fenv: `0x${fenv[0].toString(16)}`,
-});
-
-const DEFAULT_READERS = 126;
-
-// ffi_env_set_maxreaders()
-rc = lib.ffi_env_set_maxreaders(fenv, DEFAULT_READERS * 2);
-log.info({
-  m: "after ffi_env_set_maxreaders()",
-  rc,
-  rm: iferror(rc),
-});
-
-// ffi_env_open()
-
-let path = ".testdb";
-const encoder = new TextEncoder();
-let pathUtf8 = encoder.encode(path);
-rc = lib.ffi_env_open(fenv, pathUtf8, pathUtf8.byteLength, 0, 0o664);
-log.info({
-  m: "after ffi_env_open()",
-  rc,
-  rm: iferror(rc),
-});
-
-// ffi_env_copy()
-
-path = ".testdb2";
-pathUtf8 = encoder.encode(path);
-rc = lib.ffi_env_copy(fenv, pathUtf8, pathUtf8.byteLength);
-log.info({
-  m: "after ffi_env_copy()",
-  rc,
-  rm: iferror(rc),
-  path,
-});
-
-// ffi_env_stat();
-
-const STAT_LEN = 6;
-const STAT_PSIZE = 0;
-const STAT_DEPTH = 1;
-const STAT_BRANCH_PAGES = 2;
-const STAT_LEAF_PAGES = 3;
-const STAT_OVERFLOW_PAGES = 4;
-const STAT_ENTRIES = 5;
-
-const fstat = new Float64Array(STAT_LEN);
-rc = lib.ffi_env_stat(fenv, fstat);
-log.info({
-  m: "after ffi_env_stat()",
-  rc,
-  rm: iferror(rc),
-  psize: fstat[STAT_PSIZE],
-  depth: fstat[STAT_DEPTH],
-  branchPages: fstat[STAT_BRANCH_PAGES],
-  leafPages: fstat[STAT_LEAF_PAGES],
-  overflowPages: fstat[STAT_OVERFLOW_PAGES],
-  entries: fstat[STAT_ENTRIES],
-});
-
-// ffi_env_info()
-
-const INFO_LEN = 5;
-const INFO_MAPSIZE = 0;
-const INFO_LAST_PGNO = 1;
-const INFO_LAST_TXNID = 2;
-const INFO_MAXREADERS = 3;
-const INFO_NUMREADERS = 4;
-
-let finfo = new Float64Array(INFO_LEN);
-rc = lib.ffi_env_info(fenv, finfo);
-log.info({
-  m: "after ffi_env_info()",
-  rc,
-  rm: iferror(rc),
-  mapsize: finfo[INFO_MAPSIZE],
-  lastPage: finfo[INFO_LAST_PGNO],
-  lastTxn: finfo[INFO_LAST_TXNID],
-  maxReaders: finfo[INFO_MAXREADERS],
-  numReaders: finfo[INFO_NUMREADERS],
-});
-
-// ffi_env_sync()
-
-export const FORCE = 1;
-export const DONT_FORCE = 0;
-rc = lib.ffi_env_sync(fenv, DONT_FORCE);
-log.info({
-  m: "after ffi_env_sync()",
-  rc,
-  rm: iferror(rc),
-});
-
-// ffi_env_set_flags()
-
-export const FLAGS_ON = 1;
-export const FLAGS_OFF = 0;
-rc = lib.ffi_env_set_flags(fenv, MDB_NOMETASYNC, FLAGS_ON);
-log.info({
-  m: "after ffi_env_set_flags()",
-  rc,
-  rm: iferror(rc),
-});
-
-// ffi_env_get_flags()
-
-const flags = new Uint32Array(1);
-rc = lib.ffi_env_get_flags(fenv, flags);
-log.info({
-  m: "after ffi_env_get_flags",
-  rc,
-  rm: iferror(rc),
-  flags: `0x${flags[0].toString(16)}`,
-});
-
-rc = lib.ffi_env_set_flags(fenv, MDB_NOMETASYNC, FLAGS_OFF);
-log.info({
-  m: "after restoring flags",
-  rc,
-  rm: iferror(rc),
-});
-
-// ffi_env_get_path()
-
-const ppath = new BigUint64Array(1); // pointer to a cstring
-rc = lib.ffi_env_get_path(fenv, ppath);
-const cstring = new Deno.UnsafePointer(ppath[0]);
-log.info({
-  m: "after ffi_env_get_path()",
-  rc,
-  rm: iferror(rc),
-  ppath: `0x${ppath[0].toString(16)}`,
-  path: new Deno.UnsafePointerView(cstring).getCString(),
-});
-
-// ffi_env_get_fd()
-
-const fd = new Int32Array(1);
-rc = lib.ffi_env_get_fd(fenv, fd);
-log.info({
-  m: "after ffi_env_get_fd()",
-  rc,
-  rm: iferror(rc),
-  fd: fd[0],
-});
-
-const DEFAULT_MAPSIZE = 1048576;
-
-// ffi_env_set_mapsize()
-rc = lib.ffi_env_set_mapsize(fenv, DEFAULT_MAPSIZE * 2);
-log.info({
-  m: "after ffi_env_set_mapsize()",
-  rc,
-  rm: iferror(rc),
-});
-
-finfo = new Float64Array(INFO_LEN);
-rc = lib.ffi_env_info(fenv, finfo);
-log.info({
-  m: "after ffi_env_info()",
-  rc,
-  rm: iferror(rc),
-  mapsize: finfo[INFO_MAPSIZE],
-  lastPage: finfo[INFO_LAST_PGNO],
-  lastTxn: finfo[INFO_LAST_TXNID],
-  maxReaders: finfo[INFO_MAXREADERS],
-  numReaders: finfo[INFO_NUMREADERS],
-});
-
-// ffi_env_get_maxreaders()
-const readers = new Uint32Array(1);
-rc = lib.ffi_env_get_maxreaders(fenv, readers);
-log.info({
-  m: "after ffi_env_get_maxreaders()",
-  rc,
-  rm: iferror(rc),
-  readers: readers[0],
-});
-
-// ffi_env_close()
-
-lib.ffi_env_close(fenv);
-log.info("after ffi_env_close()");
+export const lmdb = dylib.symbols;

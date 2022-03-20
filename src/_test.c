@@ -3,6 +3,17 @@
 #include <stdint.h>
 #include <string.h>
 
+typedef enum DAYS_OF_WEEK
+{
+  SUNDAY, // 0
+  MONDAY,
+  TUESDAY,
+  WEDNESDAY,
+  THURSDAY,
+  FRIDAY,
+  SATURDAY, // 6
+} DAYS_OF_WEEK;
+
 int main(int argc, char *argv[])
 {
   uint32_t rc = 123;
@@ -25,5 +36,9 @@ int main(int argc, char *argv[])
   double mynumber = 12;
   printf("mynumber = %.0f\n", mynumber);
   printf("strlen('\\0') = %ld\n", strlen("\0"));
+
+  printf("SUNDAY = %d\n", SUNDAY);
+  printf("SATURDAY = %d\n", SATURDAY);
+  printf("THURSDAY == 4: %d\n", THURSDAY == 4);
   puts("done.");
 }
