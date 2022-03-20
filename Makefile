@@ -16,7 +16,7 @@ incdir = $(prefix)/include
 
 INC_DIRS = -I./ $(addprefix -I, $(incdir))/
 
-all: $(libdir)/liblmdb.so $(libdir)/liblmdb.a awm lmdb-ffi
+all: $(libdir)/liblmdb.so $(libdir)/liblmdb.a lmdb_ffi
 
 clean:
 	rm -rf $(bindir)/* $(objdir)/* $(libdir)/* $(incdir)/*
@@ -52,33 +52,19 @@ $(objdir)/midl.lo: $(srcdir)/midl.c $(incdir)/midl.h
 	mkdir -p $(@D)
 	$(CC) $(CFLAGS) -fPIC -c $< -o $@ $(INC_DIRS)
 
-
-# ------- AWM ------
-.PHONY += awm
-awm: $(bindir)/awm
-
-$(bindir)/awm: $(objdir)/awm.o $(libdir)/liblmdb.so
-	mkdir -p .testdb
-	mkdir -p $(@D)
-	$(CC) $(CFLAGS) $^ -o $@
-
-$(objdir)/awm.o: src/awm.c $(incdir)/lmdb.h
-	mkdir -p $(@D)
-	$(CC) $(CFLAGS) -c $< -o $@
-
 # ------ LMDB-FFI ------
-.PHONY += lmdb-ffi
+.PHONY += lmdb_ffi
 
-lmdb-ffi: $(bindir)/lmdb-ffi $(libdir)/liblmdb-ffi.so
+lmdb_ffi: $(bindir)/lmdb_ffi $(libdir)/liblmdb_ffi.so
 
-$(bindir)/lmdb-ffi: $(objdir)/lmdb-ffi.o $(libdir)/liblmdb.so
+$(bindir)/lmdb_ffi: $(objdir)/lmdb_ffi.o $(libdir)/liblmdb.so
 	mkdir -p .testdb
 	mkdir -p $(@D)
 	$(CC) $(CFLAGS) $^ -o $@
 
-$(libdir)/liblmdb-ffi.so: $(objdir)/lmdb-ffi.o $(libdir)/liblmdb.so
+$(libdir)/liblmdb_ffi.so: $(objdir)/lmdb_ffi.o $(libdir)/liblmdb.so
 	$(CC) $(CFLAGS) -pthread -shared -o $@ $< $(objdir)/mdb.lo $(objdir)/midl.lo
 
-$(objdir)/lmdb-ffi.o: src/lmdb-ffi.c $(incdir)/lmdb.h
+$(objdir)/lmdb_ffi.o: src/lmdb_ffi.c $(incdir)/lmdb.h
 	mkdir -p $(@D)
 	$(CC) $(CFLAGS) -fPIC -c $< -o $@

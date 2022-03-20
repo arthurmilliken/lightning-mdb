@@ -124,7 +124,7 @@ int32_t ffi_env_open(uint8_t *fenv, uint8_t *fpath, uint32_t flags, uint32_t mod
   MDB_val path = unwrap_val(fpath);
   CSTR_FROM_VAL(cpath, path);
   int rc = mdb_env_open(env, cpath, (unsigned int)flags, (mdb_mode_t)mode);
-  DEBUG_PRINT(("mdb_env_open(%p, %s, %d, 0%03o): %d\n", env, cpath, flags, mode, rc));
+  DEBUG_PRINT(("mdb_env_open(%p, '%s', %d, 0%03o): %d\n", env, cpath, flags, mode, rc));
   return (int32_t)rc;
 }
 
@@ -136,7 +136,7 @@ int32_t ffi_env_copy(uint8_t *fenv, uint8_t *fpath)
   MDB_val path = unwrap_val(fpath);
   CSTR_FROM_VAL(cpath, path);
   int rc = mdb_env_copy(env, cpath);
-  DEBUG_PRINT(("mdb_env_copy(%p, %s): %d\n", env, cpath, rc));
+  DEBUG_PRINT(("mdb_env_copy(%p, '%s'): %d\n", env, cpath, rc));
   return (int32_t)rc;
 }
 
@@ -158,7 +158,7 @@ int32_t ffi_env_copy2(uint8_t *fenv, uint8_t *fpath, uint32_t flags)
   MDB_val path = unwrap_val(fpath);
   CSTR_FROM_VAL(cpath, path);
   int rc = mdb_env_copy2(env, cpath, (unsigned int)flags);
-  DEBUG_PRINT(("mdb_env_copy2(%p, %s, %d)\n", env, cpath, flags));
+  DEBUG_PRINT(("mdb_env_copy2(%p, '%s', %d)\n", env, cpath, flags));
   return (int32_t)rc;
 }
 
@@ -327,7 +327,9 @@ int32_t ffi_env_set_mapsize(uint8_t *fenv, uint64_t size)
 }
 
 /**
- * @brief mdb_env_set_maxreaders wrapper NOTE: Must be called before ffi_env_open(). */
+ * @brief mdb_env_set_maxreaders wrapper
+ * NOTE: Must be called before ffi_env_open().
+ * */
 int32_t ffi_env_set_maxreaders(uint8_t *fenv, uint32_t readers)
 {
   MDB_env *env = unwrap_env(fenv);

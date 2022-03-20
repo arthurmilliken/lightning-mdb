@@ -1,4 +1,5 @@
 import * as log from "https://deno.land/std@0.129.0/log/mod.ts";
+import { ensureDir } from "https://deno.land/std@0.130.0/fs/mod.ts";
 import {
   lmdb,
   MDB_CREATE,
@@ -7,7 +8,7 @@ import {
   MDB_NOOVERWRITE,
   MDB_RDONLY,
   op,
-} from "./lmdb-ffi.ts";
+} from "./lmdb_ffi.ts";
 
 // deno-lint-ignore no-explicit-any
 function logDebug(arg: any) {
@@ -89,6 +90,7 @@ logDebug({
 
 // ffi_env_open()
 let path = ".testdb";
+await ensureDir(path);
 let fpath = wrapValue(encoder.encode(path));
 
 rc = lmdb.ffi_env_open(fenv, fpath, 0, 0o664);
@@ -101,8 +103,9 @@ logDebug({
 
 // ffi_env_copy()
 path = ".testdb2";
+await ensureDir(path);
 fpath = wrapValue(encoder.encode(path));
-rc = lmdb.ffi_env_copy(fenv, fpath);
+rc = await lmdb.ffi_env_copy(fenv, fpath);
 logDebug({
   m: "after ffi_env_copy()",
   rc,
@@ -390,7 +393,7 @@ logDebug({
 
 // ffi_get() - unsafe "zero-copy" semantics
 let key = "hello";
-let keyEncoded = encoder.encode(key);
+const keyEncoded = encoder.encode(key);
 let fkey = wrapValue(keyEncoded);
 let fdata = new BigUint64Array(2);
 rc = lmdb.ffi_get(ftxn, dbi, fkey, fdata);

@@ -1,5 +1,3 @@
-import * as log from "https://deno.land/std@0.129.0/log/mod.ts";
-
 /** mdb_env Environment Flags */
 
 /** mmap at a fixed address (experimental) */
@@ -174,7 +172,7 @@ switch (Deno.build.os) {
     break;
 }
 
-const libName = `./build/lib/liblmdb-ffi.${libSuffix}`;
+const libName = `./build/lib/liblmdb_ffi.${libSuffix}`;
 // Open library and define exported symbols
 const dylib = Deno.dlopen(libName, {
   ffi_version: {
@@ -196,18 +194,22 @@ const dylib = Deno.dlopen(libName, {
   ffi_env_copy: {
     parameters: ["pointer", "pointer"],
     result: "i32",
+    nonblocking: true,
   },
   ffi_env_copyfd: {
     parameters: ["pointer", "i32"],
     result: "i32",
+    nonblocking: true,
   },
   ffi_env_copy2: {
     parameters: ["pointer", "pointer", "u32"],
     result: "i32",
+    nonblocking: true,
   },
   ffi_env_copyfd2: {
     parameters: ["pointer", "i32", "u32"],
     result: "i32",
+    nonblocking: true,
   },
   ffi_env_stat: {
     parameters: ["pointer", "pointer"],
