@@ -1,32 +1,5 @@
-import * as log from "https://deno.land/std@0.130.0/log/mod.ts";
-import { ensureDir } from "https://deno.land/std@0.130.0/fs/mod.ts";
-import { dirname } from "https://deno.land/std@0.130.0/path/mod.ts";
-import {
-  FLAGS_OFF,
-  FLAGS_ON,
-  lmdb,
-  MDB_CP_COMPACT,
-  MDB_CREATE,
-  MDB_KEYEXIST,
-  MDB_MAPASYNC,
-  MDB_NOLOCK,
-  MDB_NOMEMINIT,
-  MDB_NOMETASYNC,
-  MDB_NOOVERWRITE,
-  MDB_NORDAHEAD,
-  MDB_NOSUBDIR,
-  MDB_NOSYNC,
-  MDB_NOTLS,
-  MDB_PREVSNAPSHOT,
-  MDB_PROBLEM,
-  MDB_RDONLY,
-  MDB_WRITEMAP,
-  op,
-  SYNC_DONT_FORCE,
-  SYNC_FORCE,
-} from "./lmdb_ffi.ts";
-import { DbValue } from "./dbvalue.ts";
-import { DbError, notImplemented } from "./dberror.ts";
+import { lmdb, MDB_NOMETASYNC, MDB_NOSYNC, MDB_RDONLY } from "./lmdb_ffi.ts";
+import { DbError } from "./dberror.ts";
 import { Environment } from "./environment.ts";
 
 interface TxnFlags {
