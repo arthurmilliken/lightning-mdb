@@ -228,6 +228,11 @@ const dylib = Deno.dlopen(libName, {
     parameters: ["pointer", "i32"],
     result: "i32",
   },
+  ffi_env_sync_force: {
+    parameters: ["pointer", "i32"],
+    result: "i32",
+    nonblocking: true,
+  },
   ffi_env_close: {
     parameters: ["pointer"],
     result: "void",
@@ -295,6 +300,14 @@ const dylib = Deno.dlopen(libName, {
   ffi_txn_abort: {
     parameters: ["pointer"],
     result: "void",
+  },
+  ffi_txn_reset: {
+    parameters: ["pointer"],
+    result: "void",
+  },
+  ffi_txn_renew: {
+    parameters: ["pointer"],
+    result: "i32",
   },
   ffi_dbi_open: {
     parameters: ["pointer", "pointer", "u32", "pointer"],

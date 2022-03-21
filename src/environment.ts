@@ -2,26 +2,18 @@ import * as log from "https://deno.land/std@0.130.0/log/mod.ts";
 import { ensureDir } from "https://deno.land/std@0.130.0/fs/mod.ts";
 import { dirname } from "https://deno.land/std@0.130.0/path/mod.ts";
 import {
-  FLAGS_OFF,
-  FLAGS_ON,
   lmdb,
   MDB_CP_COMPACT,
-  MDB_MAPASYNC,
-  MDB_NOLOCK,
-  MDB_NOMEMINIT,
   MDB_NOMETASYNC,
-  MDB_NORDAHEAD,
   MDB_NOSUBDIR,
   MDB_NOSYNC,
-  MDB_NOTLS,
   MDB_PREVSNAPSHOT,
   MDB_RDONLY,
-  MDB_WRITEMAP,
-  SYNC_DONT_FORCE,
   SYNC_FORCE,
 } from "./lmdb_ffi.ts";
 import { DbValue } from "./dbvalue.ts";
 import { DbError } from "./dberror.ts";
+import { DbStat } from "./dbstat.ts";
 
 export interface Version {
   major: number;
@@ -31,76 +23,13 @@ export interface Version {
 }
 
 export interface EnvOptions {
+  path: string;
   maxReaders?: number;
   maxDbs?: number;
   mapSize?: number;
-}
-
-export interface EnvFlags {
   noSubdir?: boolean;
   readOnly?: boolean;
-  writeMap?: boolean;
-  noMetaSync?: boolean;
-  noSync?: boolean;
-  mapAsync?: boolean;
-  noTLS?: boolean;
-  noLock?: boolean;
-  noReadAhead?: boolean;
-  noMemInit?: boolean;
   prevSnapshot?: boolean;
-}
-
-export interface EnvFlagsWriteable {
-  noMetaSync?: boolean;
-  noSync?: boolean;
-  mapAsync?: boolean;
-  noMemInit?: boolean;
-}
-
-export function calcEnvFlags(f: EnvFlagsWriteable, inverse = false) {
-  if (inverse) {
-    // Count only the flags explicitly set to FALSE
-    return (
-      (f.noMetaSync == false ? MDB_NOMETASYNC : 0) +
-      (f.noSync == false ? MDB_NOSYNC : 0) +
-      (f.mapAsync == false ? MDB_MAPASYNC : 0) +
-      (f.noMemInit == false ? MDB_NOMEMINIT : 0)
-    );
-  } else {
-    return (
-      (f.noMetaSync ? MDB_NOMETASYNC : 0) +
-      (f.noSync ? MDB_NOSYNC : 0) +
-      (f.mapAsync ? MDB_MAPASYNC : 0) +
-      (f.noMemInit ? MDB_NOMEMINIT : 0)
-    );
-  }
-}
-
-export enum Mode {
-  None = 0o0,
-  Read = 0o4,
-  Write = 0o6,
-}
-
-export interface FMode {
-  self: Mode;
-  group: Mode;
-  other: Mode;
-}
-
-const envModeDefault: FMode = {
-  self: Mode.Write,
-  group: Mode.Write,
-  other: Mode.Read,
-};
-
-export interface DbStat {
-  pageSize: number;
-  depth: number;
-  branchPages: number;
-  leafPages: number;
-  overflowPages: number;
-  entries: number;
 }
 
 export interface EnvInfo {
@@ -111,10 +40,7 @@ export interface EnvInfo {
   numReaders: number;
 }
 
-function dbNotOpen() {
-  return new Error("Database is not open");
-}
-
+const notOpen = () => new Error("DB environment is not open");
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -142,23 +68,23 @@ export class Environment {
 
   // Instance behaviors
 
-  options?: EnvOptions;
-  env: BigUint64Array = new BigUint64Array(1);
+  options: EnvOptions;
+  fenv: BigUint64Array = new BigUint64Array(1);
   dbKey: DbValue = new DbValue();
   dbData: DbValue = new DbValue();
   isOpen = false;
 
-  constructor(options?: EnvOptions) {
+  constructor(options: EnvOptions) {
     this.options = options;
-    let rc = lmdb.ffi_env_create(this.env);
-    if (rc) throw DbError.fromCode(rc);
+    let rc = lmdb.ffi_env_create(this.fenv);
+    if (rc) throw DbError.from(rc);
     if (options?.maxDbs) {
-      rc = lmdb.ffi_env_set_maxdbs(this.env, options.maxDbs);
-      if (rc) throw DbError.fromCode(rc);
+      rc = lmdb.ffi_env_set_maxdbs(this.fenv, options.maxDbs);
+      if (rc) throw DbError.from(rc);
     }
     if (options?.maxReaders) {
-      rc = lmdb.ffi_env_set_maxreaders(this.env, options.maxReaders);
-      if (rc) throw DbError.fromCode(rc);
+      rc = lmdb.ffi_env_set_maxreaders(this.fenv, options.maxReaders);
+      if (rc) throw DbError.from(rc);
     }
     if (options?.mapSize) {
       this.setMapSize(options.mapSize);
@@ -166,97 +92,76 @@ export class Environment {
   }
 
   setMapSize(bytes: number): void {
-    const rc = lmdb.ffi_env_set_mapsize(this.env, bytes);
-    if (rc) throw DbError.fromCode(rc);
+    const rc = lmdb.ffi_env_set_mapsize(this.fenv, bytes);
+    if (rc) throw DbError.from(rc);
   }
 
   getMaxReaders(): number {
     const readersData = new Uint32Array(1);
-    const rc = lmdb.ffi_env_get_maxreaders(this.env, readersData);
-    if (rc) throw DbError.fromCode(rc);
+    const rc = lmdb.ffi_env_get_maxreaders(this.fenv, readersData);
+    if (rc) throw DbError.from(rc);
     return readersData[0];
   }
 
   getMaxKeySize(): number {
-    return lmdb.ffi_env_get_maxkeysize(this.env);
+    return lmdb.ffi_env_get_maxkeysize(this.fenv);
   }
 
-  async open(path: string, flags?: EnvFlags, mode?: FMode): Promise<void> {
+  async open(): Promise<void> {
     // Calculate flags.
-    const f: EnvFlags = Object.assign({}, flags);
+    // MDB_NOMETASYNC and MDB_NOSYNC are set to true so that disk flush can
+    // be handled as an asynchronous non-blocking operation.
     const flagsVal =
-      (f.noSubdir ? MDB_NOSUBDIR : 0) +
-      (f.readOnly ? MDB_RDONLY : 0) +
-      (f.writeMap ? MDB_WRITEMAP : 0) +
-      (f.noMetaSync ? MDB_NOMETASYNC : 0) +
-      (f.mapAsync ? MDB_MAPASYNC : 0) +
-      (f.noTLS ? MDB_NOTLS : 0) +
-      (f.noLock ? MDB_NOLOCK : 0) +
-      (f.noReadAhead ? MDB_NORDAHEAD : 0) +
-      (f.noMemInit ? MDB_NOMEMINIT : 0) +
-      (f.prevSnapshot ? MDB_PREVSNAPSHOT : 0);
-    // Calculate mode.
-    const _mode: FMode = Object.assign({}, envModeDefault, mode);
-    const modeVal = _mode.self * 0o100 + _mode.group * 0o10 + _mode.other;
+      MDB_NOMETASYNC |
+      MDB_NOSYNC |
+      (this.options.noSubdir ? MDB_NOSUBDIR : 0) |
+      (this.options.readOnly ? MDB_RDONLY : 0) |
+      (this.options.prevSnapshot ? MDB_PREVSNAPSHOT : 0);
     // Create dir if needed.
-    if (flags?.noSubdir) {
-      await ensureDir(dirname(path));
+    if (this.options.noSubdir) {
+      await ensureDir(dirname(this.options.path));
     } else {
-      await ensureDir(path);
+      await ensureDir(this.options.path);
     }
-    this.dbData.data = encoder.encode(path);
+    this.dbData.data = encoder.encode(this.options.path);
     const rc = lmdb.ffi_env_open(
-      this.env,
+      this.fenv,
       this.dbData.byteArray,
       flagsVal,
-      modeVal
+      0o664
     );
-    if (rc) throw DbError.fromCode(rc);
+    if (rc) throw DbError.from(rc);
     this.isOpen = true;
   }
 
   close(): void {
-    if (!this.isOpen) throw dbNotOpen();
-    lmdb.ffi_env_close(this.env);
+    if (!this.isOpen) throw notOpen();
+    lmdb.ffi_env_close(this.fenv);
     this.isOpen = false;
   }
 
   async copy(path: string, compact = false) {
-    if (!this.isOpen) throw dbNotOpen();
+    if (!this.isOpen) throw notOpen();
     await ensureDir(path);
     this.dbData.data = encoder.encode(path);
     const rc = await lmdb.ffi_env_copy2(
-      this.env,
+      this.fenv,
       this.dbData.byteArray,
       compact ? MDB_CP_COMPACT : 0
     );
-    if (rc) throw DbError.fromCode(rc);
+    if (rc) throw DbError.from(rc);
   }
 
   stat(): DbStat {
-    if (!this.isOpen) throw dbNotOpen();
-    const STAT_LEN = 6;
-    const STAT_PSIZE = 0;
-    const STAT_DEPTH = 1;
-    const STAT_BRANCH_PAGES = 2;
-    const STAT_LEAF_PAGES = 3;
-    const STAT_OVERFLOW_PAGES = 4;
-    const STAT_ENTRIES = 5;
-    const stat = new Float64Array(STAT_LEN);
-    const rc = lmdb.ffi_env_stat(this.env, stat);
-    if (rc) throw DbError.fromCode(rc);
-    return {
-      pageSize: stat[STAT_PSIZE],
-      depth: stat[STAT_DEPTH],
-      branchPages: stat[STAT_BRANCH_PAGES],
-      leafPages: stat[STAT_LEAF_PAGES],
-      overflowPages: stat[STAT_OVERFLOW_PAGES],
-      entries: stat[STAT_ENTRIES],
-    };
+    if (!this.isOpen) throw notOpen();
+    const fstat = new Float64Array(DbStat.LENGTH);
+    const rc = lmdb.ffi_env_stat(this.fenv, fstat);
+    if (rc) throw DbError.from(rc);
+    return new DbStat(fstat);
   }
 
   info(): EnvInfo {
-    if (!this.isOpen) throw dbNotOpen();
+    if (!this.isOpen) throw notOpen();
     const INFO_LEN = 5;
     const INFO_MAPSIZE = 0;
     const INFO_LAST_PGNO = 1;
@@ -264,8 +169,8 @@ export class Environment {
     const INFO_MAXREADERS = 3;
     const INFO_NUMREADERS = 4;
     const info = new Float64Array(INFO_LEN);
-    const rc = lmdb.ffi_env_info(this.env, info);
-    if (rc) throw DbError.fromCode(rc);
+    const rc = lmdb.ffi_env_info(this.fenv, info);
+    if (rc) throw DbError.from(rc);
     return {
       mapSize: info[INFO_MAPSIZE],
       lastPage: info[INFO_LAST_PGNO],
@@ -275,66 +180,37 @@ export class Environment {
     };
   }
 
-  flush(force = false): void {
-    if (!this.isOpen) throw dbNotOpen();
-    const rc = lmdb.ffi_env_sync(
-      this.env,
-      force ? SYNC_FORCE : SYNC_DONT_FORCE
-    );
-    if (rc) throw DbError.fromCode(rc);
+  flushSync(): void {
+    if (!this.isOpen) throw notOpen();
+    const rc = lmdb.ffi_env_sync(this.fenv, SYNC_FORCE);
+    if (rc) throw DbError.from(rc);
   }
 
-  setFlags(flags: EnvFlagsWriteable): void {
-    const flagsOn = calcEnvFlags(flags);
-    if (flagsOn) {
-      const rc = lmdb.ffi_env_set_flags(this.env, flagsOn, FLAGS_ON);
-      if (rc) throw DbError.fromCode(rc);
-    }
-    const flagsOff = calcEnvFlags(flags, true);
-    if (flagsOff) {
-      const rc = lmdb.ffi_env_set_flags(this.env, flagsOff, FLAGS_OFF);
-      if (rc) throw DbError.fromCode(rc);
-    }
-  }
-
-  getFlags(): EnvFlags {
-    const flagsData = new Uint32Array(1);
-    const rc = lmdb.ffi_env_get_flags(this.env, flagsData);
-    const flags = flagsData[0];
-    if (rc) throw DbError.fromCode(rc);
-    return {
-      noSubdir: (flags & MDB_NOSUBDIR) > 0,
-      readOnly: (flags & MDB_RDONLY) > 0,
-      writeMap: (flags & MDB_WRITEMAP) > 0,
-      noMetaSync: (flags & MDB_NOMETASYNC) > 0,
-      noSync: (flags & MDB_NOSYNC) > 0,
-      mapAsync: (flags & MDB_MAPASYNC) > 0,
-      noTLS: (flags & MDB_NOTLS) > 0,
-      noLock: (flags & MDB_NOLOCK) > 0,
-      noReadAhead: (flags & MDB_NORDAHEAD) > 0,
-      noMemInit: (flags & MDB_NOMEMINIT) > 0,
-      prevSnapshot: (flags & MDB_PREVSNAPSHOT) > 0,
-    };
+  async flush(): Promise<void> {
+    if (!this.isOpen) throw notOpen();
+    const rc = await lmdb.ffi_env_sync_force(this.fenv);
+    if (rc) throw DbError.from(rc);
   }
 
   getPath(): string {
-    if (!this.isOpen) throw dbNotOpen();
-    const rc = lmdb.ffi_env_get_path(this.env, this.dbData.byteArray);
-    if (rc) throw DbError.fromCode(rc);
+    if (!this.isOpen) throw notOpen();
+    const rc = lmdb.ffi_env_get_path(this.fenv, this.dbData.byteArray);
+    if (rc) throw DbError.from(rc);
     return decoder.decode(this.dbData.data);
   }
+}
+
+export async function openEnv(options: EnvOptions) {
+  const dbEnv = new Environment(options);
+  await dbEnv.open();
+  return dbEnv;
 }
 
 async function main() {
   try {
     log.info({ version: Environment.getVersionString() });
-    const dbEnv = new Environment();
-    log.info({
-      maxKeySize: dbEnv.getMaxKeySize(),
-      maxReaders: dbEnv.getMaxReaders(),
-    });
-    await dbEnv.open(".testdb");
-    log.info({ stat: dbEnv.stat() });
+    const dbEnv = await openEnv({ path: ".testdb" });
+    log.info({ stat: dbEnv.stat().asRecord() });
     log.info({ info: dbEnv.info() });
     log.info({ path: dbEnv.getPath() });
     log.info("done!");

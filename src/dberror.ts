@@ -17,7 +17,7 @@ export class DbError extends Error {
     }
     return DbError.errors[code];
   }
-  static fromCode(code: number) {
+  static from(code: number) {
     const message = DbError.errorMessage(code);
     return new DbError(message, code);
   }

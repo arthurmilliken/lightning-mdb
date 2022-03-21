@@ -246,6 +246,9 @@ extern "C"
     return (int32_t)rc;
   }
 
+#define SYNC_FORCE 1
+#define SYNC_DONT_FORCE 0
+
   /**
    * @brief mdb_env_sync wrapper */
   int32_t ffi_env_sync(uint8_t *fenv, int32_t force)
@@ -254,6 +257,19 @@ extern "C"
     int rc = mdb_env_sync(env, (int)force);
     DEBUG_PRINT(("mdb_env_sync(%p, %d)\n", env, force));
     return (int32_t)rc;
+  }
+
+  /**
+   * @brief this method is intended to be bound with "nonblocking: true",
+   * so that disk sync can be offloaded to an asynchronous worker thread
+   * and resolve a promise when complete.
+   *
+   * @param fenv
+   * @return int32_t
+   */
+  int32_t ffi_env_sync_force(uint8_t *fenv)
+  {
+    return ffi_env_sync(fenv, SYNC_FORCE);
   }
 
   /**
