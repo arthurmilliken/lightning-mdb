@@ -1,6 +1,9 @@
 import * as log from "https://deno.land/std@0.129.0/log/mod.ts";
 import { ensureDir } from "https://deno.land/std@0.130.0/fs/mod.ts";
 import {
+  SYNC_DONT_FORCE,
+  FLAGS_OFF,
+  FLAGS_ON,
   lmdb,
   MDB_CREATE,
   MDB_KEYEXIST,
@@ -156,9 +159,7 @@ logDebug({
 });
 
 // ffi_env_sync()
-export const FORCE = 1;
-export const DONT_FORCE = 0;
-rc = lmdb.ffi_env_sync(fenv, DONT_FORCE);
+rc = lmdb.ffi_env_sync(fenv, SYNC_DONT_FORCE);
 logDebug({
   m: "after ffi_env_sync()",
   rc,
@@ -166,8 +167,6 @@ logDebug({
 });
 
 // ffi_env_set_flags()
-export const FLAGS_ON = 1;
-export const FLAGS_OFF = 0;
 rc = lmdb.ffi_env_set_flags(fenv, MDB_NOMETASYNC, FLAGS_ON);
 logDebug({
   m: "after ffi_env_set_flags()",

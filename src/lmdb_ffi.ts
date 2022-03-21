@@ -134,6 +134,11 @@ export const EACCES = 13;
 /** the environment was locked by another process. */
 export const EAGAIN = 11;
 
+export const FLAGS_OFF = 0;
+export const FLAGS_ON = 1;
+export const SYNC_FORCE = 1;
+export const SYNC_DONT_FORCE = 0;
+
 export enum op {
   FIRST = 0 /** Position at first key/data item */,
   FIRST_DUP /** Position at first data item of current key. Only for #MDB_DUPSORT */,
@@ -353,6 +358,22 @@ const dylib = Deno.dlopen(libName, {
   },
   ffi_cursor_del: {
     parameters: ["pointer", "u32"],
+    result: "i32",
+  },
+  ffi_cursor_count: {
+    parameters: ["pointer", "pointer"],
+    result: "i32",
+  },
+  ffi_cmp: {
+    parameters: ["pointer", "u32", "pointer", "pointer"],
+    result: "i32",
+  },
+  ffi_dcmp: {
+    parameters: ["pointer", "u32", "pointer", "pointer"],
+    result: "i32",
+  },
+  ffi_reader_check: {
+    parameters: ["pointer", "pointer"],
     result: "i32",
   },
 });

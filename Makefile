@@ -55,12 +55,7 @@ $(objdir)/midl.lo: $(srcdir)/midl.c $(incdir)/midl.h
 # ------ LMDB-FFI ------
 .PHONY += lmdb_ffi
 
-lmdb_ffi: $(bindir)/lmdb_ffi $(libdir)/liblmdb_ffi.so
-
-$(bindir)/lmdb_ffi: $(objdir)/lmdb_ffi.o $(libdir)/liblmdb.so
-	mkdir -p .testdb
-	mkdir -p $(@D)
-	$(CC) $(CFLAGS) $^ -o $@
+lmdb_ffi: $(libdir)/liblmdb_ffi.so
 
 $(libdir)/liblmdb_ffi.so: $(objdir)/lmdb_ffi.o $(libdir)/liblmdb.so
 	$(CC) $(CFLAGS) -pthread -shared -o $@ $< $(objdir)/mdb.lo $(objdir)/midl.lo
