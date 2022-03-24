@@ -11,7 +11,7 @@ import {
   MDB_RDONLY,
   SYNC_FORCE,
 } from "./lmdb_ffi.ts";
-import { DbValue } from "./dbvalue.ts";
+import { DbData } from "./dbdata.ts";
 import { DbError } from "./dberror.ts";
 import { DbStat } from "./dbstat.ts";
 
@@ -70,8 +70,8 @@ export class Environment {
 
   options: EnvOptions;
   fenv: BigUint64Array = new BigUint64Array(1);
-  dbKey: DbValue = new DbValue();
-  dbData: DbValue = new DbValue();
+  dbKey: DbData = new DbData();
+  dbData: DbData = new DbData();
   isOpen = false;
 
   constructor(options: EnvOptions) {
@@ -107,8 +107,7 @@ export class Environment {
     return lmdb.ffi_env_get_maxkeysize(this.fenv);
   }
 
-  async open(): Promise<void> {
-    // Calculate flags.
+  async open(): Promise<Environment> {
     // MDB_NOMETASYNC and MDB_NOSYNC are set to true so that disk flush can
     // be handled as an asynchronous non-blocking operation.
     const flagsVal =
@@ -124,18 +123,15 @@ export class Environment {
       await ensureDir(this.options.path);
     }
     this.dbData.data = encoder.encode(this.options.path);
-    const rc = lmdb.ffi_env_open(
-      this.fenv,
-      this.dbData.byteArray,
-      flagsVal,
-      0o664
-    );
+    const rc = lmdb.ffi_env_open(this.fenv, this.dbData.fdata, flagsVal, 0o664);
     if (rc) throw DbError.from(rc);
     this.isOpen = true;
+    return this;
   }
 
-  close(): void {
+  async close(): Promise<void> {
     if (!this.isOpen) throw notOpen();
+    await this.flush();
     lmdb.ffi_env_close(this.fenv);
     this.isOpen = false;
   }
@@ -146,7 +142,7 @@ export class Environment {
     this.dbData.data = encoder.encode(path);
     const rc = await lmdb.ffi_env_copy2(
       this.fenv,
-      this.dbData.byteArray,
+      this.dbData.fdata,
       compact ? MDB_CP_COMPACT : 0
     );
     if (rc) throw DbError.from(rc);
@@ -194,7 +190,7 @@ export class Environment {
 
   getPath(): string {
     if (!this.isOpen) throw notOpen();
-    const rc = lmdb.ffi_env_get_path(this.fenv, this.dbData.byteArray);
+    const rc = lmdb.ffi_env_get_path(this.fenv, this.dbData.fdata);
     if (rc) throw DbError.from(rc);
     return decoder.decode(this.dbData.data);
   }

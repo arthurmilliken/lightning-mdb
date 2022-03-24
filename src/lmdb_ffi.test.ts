@@ -10,7 +10,7 @@ import {
   MDB_NOMETASYNC,
   MDB_NOOVERWRITE,
   MDB_RDONLY,
-  op,
+  CursorOp,
 } from "./lmdb_ffi.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -510,7 +510,7 @@ logDebug({ m: "ffi_cursor_open()", rc, err: iferror(rc), dbi });
 
 while (!rc) {
   // ffi_cursor_get
-  rc = lmdb.ffi_cursor_get(cursor, fkey, fdata, op.NEXT);
+  rc = lmdb.ffi_cursor_get(cursor, fkey, fdata, CursorOp.NEXT);
   key = decoder.decode(unwrapValue(fkey));
   data = decoder.decode(unwrapValue(fdata));
   logDebug({ m: "ffi_cursor_get()", rc, err: iferror(rc), key, data });
@@ -529,15 +529,75 @@ while (!rc) {
 log.info({
   m: "after cursor NEXT loop",
 });
-rc = lmdb.ffi_cursor_get(cursor, fkey, fdata, op.LAST);
+rc = lmdb.ffi_cursor_get(cursor, fkey, fdata, CursorOp.LAST);
 while (!rc) {
   key = decoder.decode(unwrapValue(fkey));
   data = decoder.decode(unwrapValue(fdata));
   logDebug({ m: "ffi_cursor_get()", rc, err: iferror(rc), key, data });
-  rc = lmdb.ffi_cursor_get(cursor, fkey, fdata, op.PREV);
+  rc = lmdb.ffi_cursor_get(cursor, fkey, fdata, CursorOp.PREV);
 }
 log.info({
   m: "after cursor PREV loop",
+});
+
+// ffi_cursor_get(): SET (exists)
+fkey = wrapValue(encoder.encode("b"));
+fdata = new BigUint64Array(2);
+rc = lmdb.ffi_cursor_get(cursor, fkey, fdata, CursorOp.SET);
+log.info({
+  m: "after ffi_cursor_get('b', SET)",
+  rc,
+  key: decoder.decode(unwrapValue(fkey)),
+  data: decoder.decode(unwrapValue(fdata)),
+  err: iferror(rc),
+});
+
+// ffi_cursor_get(): SET (no exist)
+fkey = wrapValue(encoder.encode("b1"));
+fdata = new BigUint64Array(2);
+rc = lmdb.ffi_cursor_get(cursor, fkey, fdata, CursorOp.SET);
+log.info({
+  m: "after ffi_cursor_get('b1', SET)",
+  rc,
+  err: iferror(rc),
+  key: decoder.decode(unwrapValue(fkey)),
+  data: decoder.decode(unwrapValue(fdata)),
+});
+
+// ffi_cursor_get(): SET_KEY (exists)
+fkey = wrapValue(encoder.encode("b"));
+fdata = new BigUint64Array(2);
+rc = lmdb.ffi_cursor_get(cursor, fkey, fdata, CursorOp.SET_KEY);
+log.info({
+  m: "after ffi_cursor_get('b', SET_KEY)",
+  rc,
+  err: iferror(rc),
+  key: decoder.decode(unwrapValue(fkey)),
+  data: decoder.decode(unwrapValue(fdata)),
+});
+
+// ffi_cursor_get(): SET_KEY (no exist)
+fkey = wrapValue(encoder.encode("b1"));
+fdata = new BigUint64Array(2);
+rc = lmdb.ffi_cursor_get(cursor, fkey, fdata, CursorOp.SET_KEY);
+log.info({
+  m: "after ffi_cursor_get('b1', SET_KEY)",
+  rc,
+  err: iferror(rc),
+  key: decoder.decode(unwrapValue(fkey)),
+  data: decoder.decode(unwrapValue(fdata)),
+});
+
+// ffi_cursor_get(): SET_RANGE
+fkey = wrapValue(encoder.encode("b1"));
+fdata = new BigUint64Array(2);
+rc = lmdb.ffi_cursor_get(cursor, fkey, fdata, CursorOp.SET_RANGE);
+log.info({
+  m: "after ffi_cursor_get('b1', SET_RANGE)",
+  rc,
+  err: iferror(rc),
+  key: decoder.decode(unwrapValue(fkey)),
+  data: decoder.decode(unwrapValue(fdata)),
 });
 
 lmdb.ffi_cursor_close(cursor);

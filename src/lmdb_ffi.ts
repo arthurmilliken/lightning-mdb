@@ -139,7 +139,7 @@ export const FLAGS_ON = 1;
 export const SYNC_FORCE = 1;
 export const SYNC_DONT_FORCE = 0;
 
-export enum op {
+export enum CursorOp {
   FIRST = 0 /** Position at first key/data item */,
   FIRST_DUP /** Position at first data item of current key. Only for #MDB_DUPSORT */,
   GET_BOTH /** Position at key/data pair. Only for #MDB_DUPSORT */,
@@ -229,7 +229,7 @@ const dylib = Deno.dlopen(libName, {
     result: "i32",
   },
   ffi_env_sync_force: {
-    parameters: ["pointer", "i32"],
+    parameters: ["pointer"],
     result: "i32",
     nonblocking: true,
   },

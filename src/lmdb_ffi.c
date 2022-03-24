@@ -4,17 +4,12 @@
 #include <stdlib.h>
 #include "lmdb.h"
 
-#ifdef __cplusplus
-extern "C"
-{
-#endif
-
 #define CSTR_FROM_VAL(var, from)           \
   char var[from.mv_size + 1];              \
   memcpy(var, from.mv_data, from.mv_size); \
   var[from.mv_size] = '\0'
 
-#define DEBUG 1
+#define DEBUG 0
 #if DEBUG
 #define DEBUG_PRINT(x) printf x
 #else
@@ -24,10 +19,29 @@ extern "C"
   } while (0)
 #endif
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
   void wrap_cstr(char *cstr, uint8_t *wrapper)
   {
     uint64_t addr = (uint64_t)cstr;
     memcpy(wrapper, &addr, sizeof(addr));
+  }
+
+  void wrap_val(MDB_val val, uint8_t *wrapper)
+  {
+    memcpy(wrapper, &val.mv_size, sizeof(val.mv_size));
+    memcpy(wrapper + sizeof(val.mv_size), &val.mv_data, sizeof(val.mv_data));
+  }
+
+  MDB_val unwrap_val(uint8_t *wrapper)
+  {
+    MDB_val val;
+    memcpy(&val.mv_size, wrapper, sizeof(val.mv_size));
+    memcpy(&val.mv_data, wrapper + sizeof(val.mv_size), sizeof(val.mv_data));
+    return val;
   }
 
   size_t sizedbl = sizeof(double);
@@ -67,20 +81,6 @@ extern "C"
   uint8_t *ffi_strerror(int32_t error)
   {
     return (uint8_t *)mdb_strerror((int)error);
-  }
-
-  void wrap_val(MDB_val val, uint8_t *wrapper)
-  {
-    memcpy(wrapper, &val.mv_size, sizeof(val.mv_size));
-    memcpy(wrapper + sizeof(val.mv_size), &val.mv_data, sizeof(val.mv_data));
-  }
-
-  MDB_val unwrap_val(uint8_t *wrapper)
-  {
-    MDB_val val;
-    memcpy(&val.mv_size, wrapper, sizeof(val.mv_size));
-    memcpy(&val.mv_data, wrapper + sizeof(val.mv_size), sizeof(val.mv_data));
-    return val;
   }
 
   ///////////////////////////////////////////////
@@ -233,6 +233,7 @@ extern "C"
     MDB_envinfo info;
     int rc = mdb_env_info(env, &info);
     DEBUG_PRINT(("mdb_env_info(%p, %p): %d\n", env, &info, rc));
+    // Serialize info
     double mapsize = (double)info.me_mapsize;
     double last_pgno = (double)info.me_last_pgno;
     double last_txnid = (double)info.me_last_txnid;

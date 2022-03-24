@@ -9,7 +9,7 @@ export class DbStat {
   private static OVERFLOW_PAGES = 4;
   private static ENTRIES = 5;
 
-  fstat: Float64Array;
+  private fstat: Float64Array;
 
   constructor(fstat: Float64Array) {
     if (fstat.length !== DbStat.LENGTH) {
