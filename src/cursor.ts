@@ -212,7 +212,7 @@ export class Cursor implements Iterable<CursorItem> {
       if (
         this.options?.end &&
         item &&
-        this.db.compare(this.txn, item.keyUnsafe, this.options.end) *
+        this.db.compare(item.keyUnsafe, this.options.end, this.txn) *
           comparison >
           0
       ) {
@@ -238,21 +238,22 @@ const decoder = new TextDecoder();
 async function main() {
   try {
     const env = await new Environment({ path: ".testdb" }).open();
-    const writer = new Transaction(env);
-    const db = new Database(null, writer);
-    const cursor = new Cursor(writer, db, {
+    const txn = new Transaction(env);
+    const db = new Database(null, txn);
+    db.clear(txn);
+    const cursor = new Cursor(txn, db, {
       start: encoder.encode("e"),
       end: encoder.encode("ch"),
       limit: 4,
       reverse: true,
     });
     try {
-      db.putUnsafe(encoder.encode("a"), encoder.encode("apple"), writer);
-      db.putUnsafe(encoder.encode("b"), encoder.encode("banana"), writer);
-      db.putUnsafe(encoder.encode("c"), encoder.encode("cherry"), writer);
-      db.putUnsafe(encoder.encode("d"), encoder.encode("durian"), writer);
-      db.putUnsafe(encoder.encode("e"), encoder.encode("enchilada"), writer);
-      db.putUnsafe(encoder.encode("f"), encoder.encode("fava bean"), writer);
+      db.putUnsafe("a", "apple", txn);
+      db.putUnsafe("b", "banana", txn);
+      db.putUnsafe("c", "cherry", txn);
+      db.putUnsafe("d", "durian", txn);
+      db.putUnsafe("e", "enchilada", txn);
+      db.putUnsafe("f", "fava bean", txn);
       for (const item of cursor) {
         log.info({
           m: "iterator",
@@ -260,10 +261,10 @@ async function main() {
           value: decoder.decode(item.valueUnsafe),
         });
       }
-      writer.commit();
+      txn.commit();
     } catch (err) {
       console.error(err);
-      writer.abort();
+      txn.abort();
     } finally {
       cursor.close();
       await env.close();

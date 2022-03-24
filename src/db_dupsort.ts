@@ -1,5 +1,5 @@
 import { copy } from "https://deno.land/std@0.130.0/bytes/mod.ts";
-import { DbFlags, Database, PutFlags } from "./database.ts";
+import { DbFlags, Database, PutFlags, Key, Value } from "./database.ts";
 import { KeyExistsError } from "./dberror.ts";
 import {
   MDB_DUPSORT,
@@ -26,10 +26,13 @@ export interface PutDupFlags extends PutFlags {
 }
 
 /**
- * A "Duplicate Key, Sorted Value" store, where each key
- * can have duplicate entries, sorted by value.
+ * A "Duplicate Key, Sorted Value" store, where each key can have duplicate
+ * entries, sorted by value.
  */
-export class DbDupsort extends Database {
+export class DbDupsort<
+  K extends Key = string,
+  V extends Key = string
+> extends Database<K> {
   constructor(name: string, txn: Transaction, flags: DupFlags | number) {
     super(
       name,
@@ -58,12 +61,7 @@ export class DbDupsort extends Database {
     };
   }
 
-  putUnsafe(
-    key: ArrayBuffer,
-    value: ArrayBuffer,
-    txn: Transaction,
-    flags: PutDupFlags
-  ): void {
+  putUnsafe(key: K, value: V, txn: Transaction, flags: PutDupFlags): void {
     return this._put(
       key,
       value,
@@ -74,12 +72,7 @@ export class DbDupsort extends Database {
     );
   }
 
-  put(
-    key: ArrayBuffer,
-    value: ArrayBuffer,
-    txn: Transaction,
-    flags: PutDupFlags
-  ): void {
+  put(key: K, value: V, txn: Transaction, flags: PutDupFlags): void {
     try {
       this.putUnsafe(key, value, txn, flags);
     } catch (err) {

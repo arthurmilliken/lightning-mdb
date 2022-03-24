@@ -1,3 +1,4 @@
+import { Key } from "./database.ts";
 import { lmdb, MDB_KEYEXIST, MDB_NOTFOUND } from "./lmdb_ffi.ts";
 
 export class DbError extends Error {
@@ -27,12 +28,12 @@ export class DbError extends Error {
  * Thrown when a PUT operation is executed with the noOverwrite flag,
  * and the given key already exists.
  */
-export class KeyExistsError extends DbError {
+export class KeyExistsError<K extends Key = string> extends DbError {
   /** The db key which already exists */
-  key: ArrayBuffer;
+  key: Key;
   /** The current db value in the database */
   value: ArrayBuffer;
-  constructor(key: ArrayBuffer, value: ArrayBuffer, message?: string) {
+  constructor(key: Key, value: ArrayBuffer, message?: string) {
     if (!message) message = DbError.errorMessage(MDB_KEYEXIST);
     super(message, MDB_KEYEXIST);
     this.key = key;
@@ -41,8 +42,8 @@ export class KeyExistsError extends DbError {
 }
 
 export class NotFoundError extends DbError {
-  key: ArrayBuffer;
-  constructor(key: ArrayBuffer, message?: string) {
+  key: Key;
+  constructor(key: Key, message?: string) {
     if (!message) message = DbError.errorMessage(MDB_NOTFOUND);
     super(message, MDB_NOTFOUND);
     this.key = key;

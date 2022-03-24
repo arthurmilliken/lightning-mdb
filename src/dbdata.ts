@@ -1,10 +1,5 @@
 import { DbError } from "./dberror.ts";
 
-export interface DbEntry {
-  key: DbData;
-  data: DbData;
-}
-
 export class DbData {
   fdata: BigUint64Array;
   constructor(wrapper?: BigUint64Array) {
@@ -36,5 +31,5 @@ export interface DbString {
 }
 
 export interface DbNumber {
-  data: string;
+  data: number;
 }

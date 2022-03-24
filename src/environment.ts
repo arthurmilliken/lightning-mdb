@@ -103,8 +103,11 @@ export class Environment {
     return readersData[0];
   }
 
+  maxKeySize = 0;
   getMaxKeySize(): number {
-    return lmdb.ffi_env_get_maxkeysize(this.fenv);
+    if (!this.maxKeySize)
+      this.maxKeySize = lmdb.ffi_env_get_maxkeysize(this.fenv);
+    return this.maxKeySize;
   }
 
   async open(): Promise<Environment> {
