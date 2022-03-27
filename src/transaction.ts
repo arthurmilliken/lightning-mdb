@@ -10,18 +10,24 @@ import { Environment } from "./environment.ts";
 
 const notOpen = () => new Error("Transaction is already closed.");
 
+/**
+ * Represents a single consistent view of the database, based on the
+ * moment the transaction was created.
+ */
 export class Transaction {
   ftxn = new BigUint64Array(1);
   isOpen = false;
   env: Environment;
-  readonly: boolean;
+  readOnly: boolean;
   parent: Transaction | undefined;
 
-  constructor(env: Environment, readonly = false, parent?: Transaction) {
+  private id = ++curId;
+
+  constructor(env: Environment, readOnly = false, parent?: Transaction) {
     this.env = env;
-    this.readonly = readonly;
+    this.readOnly = readOnly;
     this.parent = parent;
-    const flags = (readonly ? MDB_RDONLY : 0) | MDB_NOMETASYNC | MDB_NOSYNC;
+    const flags = (readOnly ? MDB_RDONLY : 0) | MDB_NOMETASYNC | MDB_NOSYNC;
     const rc = lmdb.ffi_txn_begin(
       env.fenv,
       parent?.ftxn || null,
@@ -30,17 +36,22 @@ export class Transaction {
     );
     if (rc) throw DbError.from(rc);
     this.isOpen = true;
+    records[this.id] = {
+      addr: this.ftxn[0],
+      isOpen: true,
+    };
+    registry.register(this, this.id);
   }
 
-  beginChildTxn(readonly?: boolean): Transaction {
+  beginChildTxn(readOnly?: boolean): Transaction {
     return new Transaction(
       this.env,
-      readonly === undefined ? this.readonly : readonly,
+      readOnly === undefined ? this.readOnly : readOnly,
       this
     );
   }
 
-  get id() {
+  get txnid() {
     return lmdb.ffi_txn_id(this.ftxn);
   }
 
@@ -49,6 +60,7 @@ export class Transaction {
     let rc = lmdb.ffi_txn_commit(this.ftxn);
     if (rc) throw DbError.from(rc);
     this.isOpen = false;
+    records[this.id].isOpen = true;
     rc = await lmdb.ffi_env_sync_force(this.env.fenv);
     if (rc) throw DbError.from(rc);
   }
@@ -58,20 +70,23 @@ export class Transaction {
     let rc = lmdb.ffi_txn_commit(this.ftxn);
     if (rc) throw DbError.from(rc);
     this.isOpen = false;
+    records[this.id].isOpen = false;
     rc = lmdb.ffi_env_sync(this.env.fenv, SYNC_FORCE);
     if (rc) throw DbError.from(rc);
   }
 
   abort(): void {
-    if (!this.isOpen) throw notOpen();
+    if (!this.isOpen) return;
     lmdb.ffi_txn_abort(this.ftxn);
     this.isOpen = false;
+    records[this.id].isOpen = false;
   }
 
   reset(): void {
     if (!this.isOpen) throw notOpen();
     lmdb.ffi_txn_reset(this.ftxn);
     this.isOpen = false;
+    records[this.id].isOpen = false;
   }
 
   renew(): void {
@@ -79,5 +94,26 @@ export class Transaction {
     const rc = lmdb.ffi_txn_renew(this.ftxn);
     if (rc) throw DbError.from(rc);
     this.isOpen = true;
+    records[this.id].isOpen = true;
   }
 }
+
+/////////////////////////////////
+// Finalization management begin
+let curId = 0;
+interface Finalizer {
+  addr: bigint;
+  isOpen: boolean;
+}
+const records: Record<number, Finalizer> = {};
+const registry = new FinalizationRegistry((id: number) => {
+  const record = records[id];
+  if (!record) return;
+  if (record.isOpen) {
+    const ftxn = new BigUint64Array([BigInt(record.addr)]);
+    lmdb.ffi_txn_abort(ftxn);
+  }
+  delete records[id];
+});
+// Finalization management end
+/////////////////////////////////

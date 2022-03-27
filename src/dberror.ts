@@ -1,4 +1,4 @@
-import { Key } from "./database.ts";
+import { Key } from "./util.ts";
 import { lmdb, MDB_KEYEXIST, MDB_NOTFOUND } from "./lmdb_ffi.ts";
 
 export class DbError extends Error {

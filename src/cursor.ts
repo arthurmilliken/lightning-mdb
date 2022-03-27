@@ -1,4 +1,6 @@
+import * as log from "https://deno.land/std@0.130.0/log/mod.ts";
 import { copy } from "https://deno.land/std@0.130.0/bytes/mod.ts";
+
 import { Database, PutFlags } from "./database.ts";
 import {
   DbError,
@@ -15,15 +17,19 @@ import {
   MDB_CURRENT,
   MDB_NOOVERWRITE,
   MDB_KEYEXIST,
+  MDB_INTEGERKEY,
 } from "./lmdb_ffi.ts";
 import { Transaction } from "./transaction.ts";
+import { Environment } from "./environment.ts";
+import { decoder, encodeKey, encodeValue, Key, Value } from "./util.ts";
 
-export interface CursorOptions {
-  start?: ArrayBuffer;
-  end?: ArrayBuffer;
+export interface CursorOptions<K extends Key = string> {
+  start?: K;
+  end?: K;
   reverse?: boolean;
   limit?: number;
   offset?: number;
+  readOnly?: boolean;
 }
 
 export class CursorItem {
@@ -39,11 +45,26 @@ export class CursorItem {
     copy(src, data);
     return data.buffer;
   }
+  keyString(): string {
+    return decoder.decode(this.keyUnsafe);
+  }
+  keyNumber(): number {
+    return new Float64Array(this.keyUnsafe)[0];
+  }
   value(): ArrayBuffer {
     const src = new Uint8Array(this.valueUnsafe);
     const data = new Uint8Array(src.length);
     copy(src, data);
     return data.buffer;
+  }
+  valueString(): string {
+    return decoder.decode(this.valueUnsafe);
+  }
+  valueNumber(): number {
+    return new Float64Array(this.valueUnsafe)[0];
+  }
+  valueBoolean(): boolean {
+    return !!new Uint8Array(this.valueUnsafe)[0];
   }
 }
 
@@ -58,34 +79,84 @@ export interface CursorPutFlags extends PutFlags {
   current?: boolean;
 }
 
-export class Cursor implements Iterable<CursorItem> {
+const notOpen = () => new DbError("Cursor is already closed");
+
+/**
+ * Allows traversal of keys and values in database.
+ */
+export class Cursor<K extends Key = string> implements Iterable<CursorItem> {
   fcursor = new BigUint64Array(1);
-  txn: Transaction;
   db: Database;
-  options?: CursorOptions;
+  txn: Transaction;
+  ownsTxn: boolean;
+  options: CursorOptions<K> | null;
+  isOpen: boolean;
 
   protected dbKey = new DbData();
   protected dbValue = new DbData();
 
-  constructor(txn: Transaction, db: Database, options?: CursorOptions) {
-    this.txn = txn;
+  private id = ++curId;
+
+  constructor(
+    db: Database,
+    options?: CursorOptions<K> | null,
+    txn?: Transaction
+  ) {
     this.db = db;
-    this.options = options;
-    const rc = lmdb.ffi_cursor_open(txn.ftxn, db.dbi, this.fcursor);
+    this.options = options || null;
+    if (txn) {
+      this.txn = txn;
+      this.ownsTxn = false;
+    } else {
+      this.txn = new Transaction(db.env, options?.readOnly);
+      this.ownsTxn = true;
+    }
+    const rc = lmdb.ffi_cursor_open(this.txn.ftxn, db.dbi, this.fcursor);
     if (rc) throw DbError.from(rc);
+    this.isOpen = true;
+    records[this.id] = {
+      addr: this.fcursor[0],
+      isOpen: true,
+    };
+    registry.register(this, this.id);
   }
 
   close(): void {
+    if (!this.isOpen) return;
     lmdb.ffi_cursor_close(this.fcursor);
+    if (this.ownsTxn) this.txn.commit();
+    this.isOpen = false;
+    records[this.id].isOpen = false;
   }
 
-  renew(txn: Transaction): void {
-    const rc = lmdb.ffi_cursor_renew(txn.ftxn, this.fcursor);
-    if (rc === MDB_NOTFOUND) this.close();
-    throw notImplemented();
+  renew(options: CursorOptions<K> | null, txn?: Transaction): void {
+    if (this.isOpen) this.close();
+    if (options) this.options = options;
+    if (txn) {
+      this.txn = txn;
+      this.ownsTxn = false;
+    } else {
+      this.txn = new Transaction(this.db.env, options?.readOnly);
+      this.ownsTxn = true;
+    }
+
+    const rc = lmdb.ffi_cursor_renew(this.txn.ftxn, this.fcursor);
+    if (rc) {
+      this.close();
+      throw DbError.from(rc);
+    }
+    this.isOpen = true;
+    records[this.id].isOpen = true;
+  }
+
+  protected encodeKey(key: K): void {
+    if (typeof key === "number" && !(this.db.flags & MDB_INTEGERKEY))
+      throw new DbError("This database does not support integer keys");
+    this.dbKey.data = encodeKey(key);
   }
 
   protected _get(op: CursorOp): number {
+    if (!this.isOpen) throw notOpen();
     return lmdb.ffi_cursor_get(
       this.fcursor,
       this.dbKey.fdata,
@@ -102,53 +173,39 @@ export class Cursor implements Iterable<CursorItem> {
     else return new CursorItem(this.dbKey.data, this.dbValue.data);
   }
 
-  first(): CursorItem | null {
-    return this.get(CursorOp.FIRST);
-  }
+  first = () => this.get(CursorOp.FIRST);
+  last = () => this.get(CursorOp.LAST);
+  next = () => this.get(CursorOp.NEXT);
+  prev = () => this.get(CursorOp.PREV);
 
-  last(): CursorItem | null {
-    return this.get(CursorOp.LAST);
-  }
-
-  next(): CursorItem | null {
-    return this.get(CursorOp.NEXT);
-  }
-
-  prev(): CursorItem | null {
-    return this.get(CursorOp.PREV);
-  }
-
-  set(key: ArrayBuffer): void {
-    this.dbKey.data = key;
+  set(key: K): void {
+    this.encodeKey(key);
     const rc = this._get(CursorOp.SET);
     if (rc === MDB_NOTFOUND) {
       throw new NotFoundError(key);
     } else if (rc) throw DbError.from(rc);
   }
 
-  setKey(key: ArrayBuffer): CursorItem | null {
-    this.dbKey.data = key;
+  setKey(key: K): CursorItem | null {
+    this.encodeKey(key);
     const rc = this._get(CursorOp.SET_KEY);
     if (rc === MDB_NOTFOUND) return null;
     else if (rc) throw DbError.from(rc);
     else return new CursorItem(this.dbKey.data, this.dbValue.data);
   }
 
-  setRange(key: ArrayBuffer): CursorItem | null {
-    this.dbKey.data = key;
+  setRange(key: K): CursorItem | null {
+    this.encodeKey(key);
     const rc = this._get(CursorOp.SET_RANGE);
     if (rc === MDB_NOTFOUND) return null;
     else if (rc) throw DbError.from(rc);
     else return new CursorItem(this.dbKey.data, this.dbValue.data);
   }
 
-  putUnsafe(
-    key: ArrayBuffer,
-    value: ArrayBuffer,
-    flags?: CursorPutFlags
-  ): void {
-    this.dbKey.data = key;
-    this.dbValue.data = value;
+  putUnsafe(key: K, value: Value, flags?: CursorPutFlags): void {
+    if (!this.isOpen) throw notOpen();
+    this.encodeKey(key);
+    this.dbValue.data = encodeValue(value);
     let _flags = 0;
     if (flags) {
       _flags |=
@@ -167,7 +224,7 @@ export class Cursor implements Iterable<CursorItem> {
     else if (rc) throw DbError.from(rc);
   }
 
-  put(key: ArrayBuffer, value: ArrayBuffer, flags?: CursorPutFlags): void {
+  put(key: K, value: Value, flags?: CursorPutFlags): void {
     try {
       this.putUnsafe(key, value, flags);
     } catch (err) {
@@ -183,7 +240,8 @@ export class Cursor implements Iterable<CursorItem> {
     }
   }
 
-  *iterator(): Generator<CursorItem, void, ArrayBuffer | undefined> {
+  *iterator(): Generator<CursorItem, void, K | undefined> {
+    if (!this.isOpen) throw notOpen();
     const begin = this.options?.reverse
       ? this.last.bind(this)
       : this.first.bind(this);
@@ -203,7 +261,10 @@ export class Cursor implements Iterable<CursorItem> {
       let offset = found;
       while (offset < this.options.offset) {
         item = incr();
-        if (item == null) return;
+        if (item == null) {
+          this.close();
+          return;
+        }
         offset++;
       }
     }
@@ -212,61 +273,75 @@ export class Cursor implements Iterable<CursorItem> {
       if (
         this.options?.end &&
         item &&
-        this.db.compare(item.keyUnsafe, this.options.end, this.txn) *
+        this.db.compare(item.keyUnsafe, encodeKey(this.options.end), this.txn) *
           comparison >
           0
       ) {
+        this.close();
         return;
       }
       if (item) {
         found++;
-        yield item;
+        const setK = yield item;
+        if (setK) this.set(setK);
       }
       item = incr();
     }
+    this.close();
   }
 
   [Symbol.iterator] = this.iterator;
 }
 
-import * as log from "https://deno.land/std@0.130.0/log/mod.ts";
-import { Environment } from "./environment.ts";
-
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
+/////////////////////////////////
+// Finalization management begin
+let curId = 0;
+interface Finalizer {
+  addr: bigint;
+  isOpen: boolean;
+}
+const records: Record<number, Finalizer> = {};
+const registry = new FinalizationRegistry((id: number) => {
+  const record = records[id];
+  if (!record) return;
+  if (record.isOpen) {
+    const fcursor = new BigUint64Array([BigInt(record.addr)]);
+    lmdb.ffi_cursor_close(fcursor);
+  }
+  delete records[id];
+});
+// Finalization management end
+/////////////////////////////////
 
 async function main() {
+  log.info("main(): start");
   try {
     const env = await new Environment({ path: ".testdb" }).open();
-    const txn = new Transaction(env);
-    const db = new Database(null, txn);
-    db.clear(txn);
-    const cursor = new Cursor(txn, db, {
-      start: encoder.encode("e"),
-      end: encoder.encode("ch"),
-      limit: 4,
-      reverse: true,
-    });
+    log.info("main(): after env.open()");
+    const db = new Database(null, env);
+    log.info("main(): after new Database()");
+    await db.clearAsync();
+    log.info("main(): after db.clear()");
     try {
-      db.putUnsafe("a", "apple", txn);
-      db.putUnsafe("b", "banana", txn);
-      db.putUnsafe("c", "cherry", txn);
-      db.putUnsafe("d", "durian", txn);
-      db.putUnsafe("e", "enchilada", txn);
-      db.putUnsafe("f", "fava bean", txn);
+      log.info("main(): after new Cursor()");
+      await db.putAsync("a", "apple");
+      await db.putAsync("b", "banana");
+      await db.putAsync("c", "cherry");
+      await db.putAsync("d", "durian");
+      await db.putAsync("e", "enchilada");
+      await db.putAsync("f", "fava bean");
+      log.info("main(): after puts");
+      const cursor = new Cursor(db, {
+        reverse: true,
+      });
       for (const item of cursor) {
         log.info({
           m: "iterator",
-          key: decoder.decode(item.keyUnsafe),
-          value: decoder.decode(item.valueUnsafe),
+          key: item.keyString(),
+          value: item.valueString(),
         });
       }
-      txn.commit();
-    } catch (err) {
-      console.error(err);
-      txn.abort();
     } finally {
-      cursor.close();
       await env.close();
     }
   } catch (err) {

@@ -1,4 +1,5 @@
 import { copy } from "https://deno.land/std@0.130.0/bytes/mod.ts";
+import * as log from "https://deno.land/std@0.130.0/log/mod.ts";
 
 import {
   lmdb,
@@ -15,46 +16,7 @@ import { Transaction } from "./transaction.ts";
 import { DbData } from "./dbdata.ts";
 import { DbStat } from "./dbstat.ts";
 import { Environment } from "./environment.ts";
-
-export type U64 = number /** unsigned 64-bit integer */;
-export type Key = ArrayBuffer | string | U64;
-export type Value = ArrayBuffer | string | number | boolean;
-
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-
-export function assertU64(num: number) {
-  if (
-    typeof num !== "number" ||
-    num < 0 ||
-    num > Number.MAX_SAFE_INTEGER ||
-    Math.floor(num) !== num
-  ) {
-    throw new TypeError(
-      `${num} is not a valid non-zero integer below Number.MAX_SAFE_INTEGER`
-    );
-  }
-}
-
-export function encodeKey(key: Key): ArrayBuffer {
-  if (key instanceof ArrayBuffer) return key;
-  if (typeof key === "string") return encoder.encode(key);
-  if (typeof key === "number") {
-    assertU64(key);
-    return new BigUint64Array([BigInt(key)]).buffer;
-  }
-  throw new TypeError(`Invalid key: ${key}`);
-}
-
-export function encodeValue(value: Value): ArrayBuffer {
-  if (value instanceof ArrayBuffer) return value;
-  if (typeof value === "string") return encoder.encode(value);
-  if (typeof value === "number") return new Float64Array([value]).buffer;
-  if (typeof value === "boolean") {
-    return value ? new Uint8Array([1]) : new Uint8Array([0]);
-  }
-  throw new TypeError(`Invalid value: ${value}`);
-}
+import { Key, encodeKey, decoder, Value, encodeValue } from "./util.ts";
 
 export interface DbFlags {
   create?: boolean;
@@ -67,7 +29,7 @@ export interface PutFlags {
   append?: boolean;
 }
 
-export const notOpen = () => new DbError("Database is not open.");
+export const notOpen = () => new DbError("Database is already closed");
 const DROP_EMPTY = 0;
 const DROP_DELETE = 1;
 
@@ -85,11 +47,10 @@ export class Database<K extends Key = string> {
 
   constructor(
     name: string | null,
-    txn: Transaction,
+    txnOrEnv: Transaction | Environment,
     flags: number | DbFlags = 0
   ) {
     this.name = name;
-    this.env = txn.env;
     if (typeof flags === "number") {
       this.flags = flags;
     } else {
@@ -106,8 +67,22 @@ export class Database<K extends Key = string> {
       fname = nameData.fdata;
     }
     const fdbi = new Uint32Array(1);
-    const rc = lmdb.ffi_dbi_open(txn.ftxn, fname, this.flags, fdbi);
-    if (rc) throw DbError.from(rc);
+    let txn: Transaction;
+    if (txnOrEnv instanceof Transaction) {
+      txn = txnOrEnv;
+      this.env = txn.env;
+      const rc = lmdb.ffi_dbi_open(txn.ftxn, fname, this.flags, fdbi);
+      if (rc) throw DbError.from(rc);
+    } else if (txnOrEnv instanceof Environment) {
+      this.env = txnOrEnv;
+      txn = new Transaction(txnOrEnv, false);
+      const rc = lmdb.ffi_dbi_open(txn.ftxn, fname, this.flags, fdbi);
+      if (rc) {
+        txn.abort();
+        throw DbError.from(rc);
+      } else txn.commit();
+    } else
+      throw new TypeError("txnOrEnv must be either Transaction or Environment");
     this.dbi = fdbi[0];
   }
 
@@ -124,21 +99,23 @@ export class Database<K extends Key = string> {
    * @param key
    * @param txn
    */
-  getUnsafe(key: K, txn: Transaction): ArrayBuffer {
+  getUnsafe(key: K, txn?: Transaction): ArrayBuffer {
     if (!this.dbi) throw notOpen();
     this.encodeKey(key);
-    const rc = lmdb.ffi_get(
-      txn.ftxn,
-      this.dbi,
-      this.dbKey.fdata,
-      this.dbValue.fdata
-    );
+    const rc = this.useTransaction((useTxn) => {
+      return lmdb.ffi_get(
+        useTxn.ftxn,
+        this.dbi,
+        this.dbKey.fdata,
+        this.dbValue.fdata
+      );
+    }, txn);
     if (rc === MDB_NOTFOUND) throw new NotFoundError(key);
     else if (rc) throw DbError.from(rc);
     return this.dbValue.data;
   }
 
-  get(key: K, txn: Transaction): ArrayBuffer {
+  get(key: K, txn?: Transaction): ArrayBuffer {
     try {
       const valueU8 = new Uint8Array(this.getUnsafe(key, txn));
       const valueCopy = new Uint8Array(valueU8.length);
@@ -155,21 +132,19 @@ export class Database<K extends Key = string> {
     }
   }
 
-  getString(key: K, txn: Transaction): string {
+  getString(key: K, txn?: Transaction): string {
     return decoder.decode(this.getUnsafe(key, txn));
   }
 
-  getNumber(key: K, txn: Transaction): number {
-    const buf = this.getUnsafe(key, txn);
-    return new Float64Array(buf)[0];
+  getNumber(key: K, txn?: Transaction): number {
+    return new Float64Array(this.getUnsafe(key, txn))[0];
   }
 
-  getBoolean(key: K, txn: Transaction): boolean {
-    const buf = this.getUnsafe(key, txn);
-    return !!new Uint8Array(buf)[0];
+  getBoolean(key: K, txn?: Transaction): boolean {
+    return !!new Uint8Array(this.getUnsafe(key, txn))[0];
   }
 
-  protected _put(key: K, value: Value, txn: Transaction, flags: number) {
+  protected _put(key: K, value: Value, txn: Transaction, flags = 0) {
     if (!this.dbi) throw notOpen();
     this.encodeKey(key);
     this.dbValue.data = encodeValue(value);
@@ -221,142 +196,178 @@ export class Database<K extends Key = string> {
     }
   }
 
-  del(key: K, txn?: Transaction): void {
-    if (!this.dbi) throw notOpen();
-    return this.useTransaction(
-      (useTxn) => {
-        this.encodeKey(key);
-        const rc = lmdb.ffi_del(useTxn.ftxn, this.dbi, this.dbKey.fdata);
-        if (rc) throw DbError.from(rc);
-      },
-      txn,
-      false
-    );
+  async putAsync(key: K, value: Value, flags?: PutFlags): Promise<void> {
+    const txn = new Transaction(this.env, false);
+    try {
+      this.put(key, value, txn, flags);
+      await txn.commit();
+    } catch (err) {
+      txn.abort();
+      throw err;
+    }
+  }
+
+  del(key: K, txn: Transaction): void {
+    this.encodeKey(key);
+    const rc = lmdb.ffi_del(txn.ftxn, this.dbi, this.dbKey.fdata);
+    if (rc) throw DbError.from(rc);
+  }
+
+  async delAsync(key: K): Promise<void> {
+    const txn = new Transaction(this.env, false);
+    try {
+      this.del(key, txn);
+      await txn.commit();
+    } catch (err) {
+      txn.abort();
+      throw err;
+    }
   }
 
   stat(txn?: Transaction): DbStat {
     if (!this.dbi) throw notOpen();
-    return this.useTransaction(
-      (useTxn) => {
-        const fstat = new Float64Array(DbStat.LENGTH);
-        const rc = lmdb.ffi_stat(useTxn.ftxn, this.dbi, fstat);
-        if (rc) throw DbError.from(rc);
-        return new DbStat(fstat);
-      },
-      txn,
-      true
-    );
+    return this.useTransaction((useTxn) => {
+      const fstat = new Float64Array(DbStat.LENGTH);
+      const rc = lmdb.ffi_stat(useTxn.ftxn, this.dbi, fstat);
+      if (rc) throw DbError.from(rc);
+      return new DbStat(fstat);
+    }, txn);
   }
 
-  drop(txn?: Transaction, del = DROP_DELETE): void {
-    this.useTransaction(
-      (useTxn) => {
-        if (!this.dbi) throw notOpen();
-        const rc = lmdb.ffi_drop(useTxn.ftxn, this.dbi, del);
-        if (rc) throw DbError.from(rc);
-        if (del === DROP_DELETE) this.dbi = 0;
-      },
-      txn,
-      false
-    );
+  drop(txn: Transaction, del = DROP_DELETE): void {
+    if (!this.dbi) throw notOpen();
+    const rc = lmdb.ffi_drop(txn.ftxn, this.dbi, del);
+    if (rc) throw DbError.from(rc);
+    if (del === DROP_DELETE) this.dbi = 0;
   }
 
-  clear = (txn?: Transaction) => this.drop(txn, DROP_EMPTY);
+  async dropAsync(del = DROP_DELETE): Promise<void> {
+    const txn = new Transaction(this.env, false);
+    try {
+      this.drop(txn, del);
+      await txn.commit();
+    } catch (err) {
+      txn.abort();
+      throw err;
+    }
+  }
+
+  clear = (txn: Transaction) => this.drop(txn, DROP_EMPTY);
+
+  clearAsync = () => this.dropAsync(DROP_EMPTY);
 
   private fflags = new Uint32Array(1);
   protected _getFlags(txn?: Transaction): number {
-    return this.useTransaction(
-      (useTxn) => {
-        if (!this.dbi) throw notOpen();
-        const rc = lmdb.ffi_dbi_flags(useTxn.ftxn, this.dbi, this.fflags);
-        if (rc) throw DbError.from(rc);
-        return this.fflags[0];
-      },
-      txn,
-      true
-    );
+    return this.useTransaction((useTxn) => {
+      if (!this.dbi) throw notOpen();
+      const rc = lmdb.ffi_dbi_flags(useTxn.ftxn, this.dbi, this.fflags);
+      if (rc) throw DbError.from(rc);
+      return this.fflags[0];
+    }, txn);
   }
 
   getFlags(txn?: Transaction): DbFlags {
-    return this.useTransaction(
-      (useTxn) => {
-        const flags = this._getFlags(useTxn);
-        return {
-          create: !!(flags & MDB_CREATE),
-          reverseKey: !!(flags & MDB_REVERSEKEY),
-          integerKey: !!(flags & MDB_INTEGERKEY),
-        };
-      },
-      txn,
-      true
-    );
+    return this.useTransaction((useTxn) => {
+      const flags = this._getFlags(useTxn);
+      return {
+        create: !!(flags & MDB_CREATE),
+        reverseKey: !!(flags & MDB_REVERSEKEY),
+        integerKey: !!(flags & MDB_INTEGERKEY),
+      };
+    }, txn);
   }
 
   protected dbValueB = new DbData();
   compare(a: ArrayBuffer, b: ArrayBuffer, txn?: Transaction): number {
-    return this.useTransaction(
-      (useTxn) => {
-        if (!this.dbi) throw notOpen();
-        this.dbValue.data = a;
-        this.dbValueB.data = b;
-        return lmdb.ffi_cmp(
-          useTxn.ftxn,
-          this.dbi,
-          this.dbValue.fdata,
-          this.dbValueB.fdata
-        );
-      },
-      txn,
-      true
-    );
+    return this.useTransaction((useTxn) => {
+      if (!this.dbi) throw notOpen();
+      this.dbValue.data = a;
+      this.dbValueB.data = b;
+      return lmdb.ffi_cmp(
+        useTxn.ftxn,
+        this.dbi,
+        this.dbValue.fdata,
+        this.dbValueB.fdata
+      );
+    }, txn);
   }
 
-  protected useTransaction<T>(
+  /**
+   * Helper method for performing read-only queries with an optional
+   * transaction.
+   *
+   * If the user omits passing a transaction, then useTransaction
+   * will create a temporary read-only transaction, pass it into the callback,
+   * abort the temp transaction, and return the same value returned from the
+   * callback.
+   *
+   * If the user supplies a transaction, then that transaction is
+   * passed into the callback, and it is up to the user to commit or abort,
+   * either within the callback or afterwards.
+   *
+   * @template T
+   * @param callback performs business logic with the supplied txn or
+   *                 creating a new one. Should return T
+   * @param txn if supplied, use this transaction, otherwise create a
+   *            temporary read-only transaction. Optional.
+   * @returns {T}
+   *
+   * @example
+   * // Create a temporary read-only transaction and automatically abort
+   * let db: Database;
+   * // ...initialize db
+   * const stat: Stat = db.useTransaction((useTxn) => {
+   *   return db.stat(useTxn);
+   * });
+   *
+   * @example
+   * // Use a pre-existing transaction, which must be committed manually
+   * let myTxn: Transaction, db: Database;
+   * // ...initialize myTxn and db
+   * const success: boolean = db.useTransaction((useTxn) => {
+   *   // ...perform business logic
+   *   if (businessLogicSucceeded) return true;
+   *   else return false;
+   * }, myTxn)
+   * if (success) myTxn.commit();
+   * else myTxn.abort();
+   */
+  useTransaction<T>(
     callback: (useTxn: Transaction) => T,
-    txn?: Transaction,
-    readonly?: boolean
-  ) {
+    txn?: Transaction
+  ): T {
     let useTxn: Transaction;
     if (txn) useTxn = txn;
-    else useTxn = new Transaction(this.env, readonly);
+    else useTxn = new Transaction(this.env, true);
     try {
-      const result = callback(useTxn);
-      if (!txn && useTxn.isOpen) useTxn.commit();
-      return result;
-    } catch (err) {
+      return callback(useTxn);
+    } finally {
       if (!txn && useTxn.isOpen) useTxn.abort();
-      throw err;
     }
   }
 }
 
-import * as log from "https://deno.land/std@0.130.0/log/mod.ts";
-
 async function main() {
   try {
     const env = await new Environment({ path: "testdb" }).open();
-    const txn = new Transaction(env);
-    const db = new Database(null, txn);
+    const db = new Database(null, env);
     try {
-      db.clear(txn);
-      db.put("a", "apple-fu", txn);
-      log.info({ a: db.getString("a", txn) });
-      db.put("b", "banana-fu", txn);
-      log.info({ b: db.getString("b", txn) });
-      db.put("c", "cherry-fu", txn);
-      log.info({ c: db.getString("c", txn) });
+      await db.clearAsync();
+      await db.putAsync("a", "apple-fu");
+      log.info({ a: db.getString("a") });
+      await db.putAsync("b", "banana-fu");
+      log.info({ b: db.getString("b") });
+      await db.putAsync("c", "cherry-fu");
+      log.info({ c: db.getString("c") });
 
-      db.put("true", true, txn);
-      db.put("false", false, txn);
+      await db.putAsync("true", true);
+      await db.putAsync("false", false);
       log.info({
-        true: db.getBoolean("true", txn),
-        false: db.getBoolean("false", txn),
+        true: db.getBoolean("true"),
+        false: db.getBoolean("false"),
       });
-
-      txn.commit();
     } catch (err) {
       log.error(err);
-      txn.abort();
     }
     await env.close();
   } catch (err) {

@@ -40,9 +40,14 @@ export interface EnvInfo {
   numReaders: number;
 }
 
-const notOpen = () => new Error("DB environment is not open");
+const notOpen = () => new DbError("DB environment is already closed");
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+
+export interface EnvMessage {
+  fenv: ArrayBuffer;
+  options: EnvOptions;
+}
 
 export class Environment {
   // Static behaviors
@@ -66,6 +71,10 @@ export class Environment {
     return Environment.getVersion().string;
   }
 
+  static fromMessage(message: EnvMessage) {
+    return new Environment(message);
+  }
+
   // Instance behaviors
 
   options: EnvOptions;
@@ -73,22 +82,44 @@ export class Environment {
   dbKey: DbData = new DbData();
   dbData: DbData = new DbData();
   isOpen = false;
+  isFromMessage = false;
 
-  constructor(options: EnvOptions) {
-    this.options = options;
-    let rc = lmdb.ffi_env_create(this.fenv);
-    if (rc) throw DbError.from(rc);
-    if (options?.maxDbs) {
-      rc = lmdb.ffi_env_set_maxdbs(this.fenv, options.maxDbs);
+  constructor(options: EnvOptions);
+  constructor(message: EnvMessage);
+  constructor(arg: EnvOptions | EnvMessage) {
+    const message = arg as EnvMessage;
+    if (message.fenv instanceof ArrayBuffer) {
+      // Create environment from message
+      this.fenv = new BigUint64Array(message.fenv);
+      this.options = message.options;
+      this.isOpen = true;
+      this.isFromMessage = true;
+    } else {
+      // Create new environment
+      const options = arg as EnvOptions;
+      let rc = lmdb.ffi_env_create(this.fenv);
       if (rc) throw DbError.from(rc);
+      if (options?.maxDbs) {
+        rc = lmdb.ffi_env_set_maxdbs(this.fenv, options.maxDbs);
+        if (rc) throw DbError.from(rc);
+      }
+      if (options?.maxReaders) {
+        rc = lmdb.ffi_env_set_maxreaders(this.fenv, options.maxReaders);
+        if (rc) throw DbError.from(rc);
+      }
+      if (options?.mapSize) {
+        this.setMapSize(options.mapSize);
+      }
+      this.options = options;
     }
-    if (options?.maxReaders) {
-      rc = lmdb.ffi_env_set_maxreaders(this.fenv, options.maxReaders);
-      if (rc) throw DbError.from(rc);
-    }
-    if (options?.mapSize) {
-      this.setMapSize(options.mapSize);
-    }
+  }
+
+  asMessage(): EnvMessage {
+    if (!this.isOpen) throw notOpen();
+    return {
+      fenv: this.fenv.buffer,
+      options: this.options,
+    };
   }
 
   setMapSize(bytes: number): void {
@@ -134,6 +165,8 @@ export class Environment {
 
   async close(): Promise<void> {
     if (!this.isOpen) throw notOpen();
+    if (this.isFromMessage)
+      throw new DbError("Cannot close environment from a worker thread");
     await this.flush();
     lmdb.ffi_env_close(this.fenv);
     this.isOpen = false;
@@ -199,19 +232,45 @@ export class Environment {
   }
 }
 
-export async function openEnv(options: EnvOptions) {
-  const dbEnv = new Environment(options);
-  await dbEnv.open();
-  return dbEnv;
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 async function main() {
   try {
     log.info({ version: Environment.getVersionString() });
-    const dbEnv = await openEnv({ path: ".testdb" });
-    log.info({ stat: dbEnv.stat().asRecord() });
-    log.info({ info: dbEnv.info() });
-    log.info({ path: dbEnv.getPath() });
+    const env = await new Environment({ path: ".testdb" }).open();
+    log.info({ stat: env.stat().asRecord() });
+    log.info({ info: env.info() });
+    log.info({ path: env.getPath() });
+    const worker = new Worker(new URL("./_worker.ts", import.meta.url).href, {
+      type: "module",
+      deno: {
+        namespace: true,
+      },
+    });
+    const msg = env.asMessage();
+
+    const addr = Number(new BigUint64Array(msg.fenv)[0]);
+    worker.postMessage(msg);
+    log.info({
+      ts: Date.now(),
+      m: "after worker.postMessage()",
+      options: msg.options,
+      addr: addr.toString(16),
+    });
+    const reply = await new Promise((resolve, reject) => {
+      worker.onmessage = (e) => {
+        resolve(e.data);
+      };
+      worker.onerror = (e) => {
+        reject(e);
+      };
+    });
+    log.info({ ts: Date.now(), reply });
+    worker.terminate();
     log.info("done!");
   } catch (err) {
     log.error(err);
