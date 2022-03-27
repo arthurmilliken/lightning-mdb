@@ -1,0 +1,26 @@
+{
+  "main": "dist/binding.js",
+  "dependencies": {
+    "node-addon-api": "^4.3.0",
+    "uuid": "^8.3.2"
+  },
+  "scripts": {
+    "prestart": "tsc",
+    "start": "node --enable-source-maps ./dist/start.js",
+    "pretest": "tsc",
+    "test": "node ./test/test_binding.js"
+  },
+  "engines": {
+    "node": ">= 16.0.0"
+  },
+  "gypfile": true,
+  "name": "hello-napi",
+  "version": "1.0.0",
+  "description": "Here we go!",
+  "author": "Arthur Milliken",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^7.0.22",
+    "typescript": "^3.9.7"
+  }
+}

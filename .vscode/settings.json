@@ -1,9 +1,1 @@
-{
-  "deno.enable": true,
-  "deno.lint": true,
-  "deno.unstable": true,
-  "files.associations": {
-    "*.ejs": "html",
-    "type_traits": "c"
-  }
-}
+{}
