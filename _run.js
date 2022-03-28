@@ -1,7 +1,6 @@
-const uuid = require("uuid");
+const fs = require("fs");
 
-const ids = [];
-for (let i = 0; i < 50; i++) {
-  ids.push(uuid.v1());
-}
-console.log(ids);
+fs.open("./quotes.txt", "r", (err, fd) => {
+  if (err) return console.log(err);
+  console.log({ fd });
+});

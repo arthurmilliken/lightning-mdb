@@ -15,6 +15,7 @@ export interface DbStat {
 }
 
 export interface EnvInfo {
+  mapAddr: bigint;
   mapSize: number;
   lastPage: number;
   lastTxn: number;
@@ -36,6 +37,7 @@ export interface EnvOptions extends EnvFlags {
 }
 
 export interface EnvFlags {
+  flags?: number /** bitmask of flags */;
   noMetaSync?: boolean;
   noSync?: boolean;
   mapAsync?: boolean;
@@ -43,7 +45,7 @@ export interface EnvFlags {
 }
 
 export interface Env {
-  readonly envPtr: number;
+  readonly pEnv: bigint;
   open(path: string, flags: EnvOptions, mode: number): void;
   copy(path: string, compact?: boolean): void;
   copyFD(fd: number, compact?: boolean): void;
@@ -66,7 +68,7 @@ export interface Env {
 }
 
 export interface Txn {
-  readonly txnPtr: number;
+  readonly pTxn: bigint;
   env(): Env;
   id(): number;
   commit(): void;
@@ -77,12 +79,14 @@ export interface Txn {
 }
 
 export interface DbFlags {
+  flags?: number /** bitmask */;
   create?: boolean;
   reverseKey?: boolean;
   integerKey?: boolean;
 }
 
 export interface PutFlags {
+  flags?: number /** bitmask */;
   reserve?: boolean;
   append?: boolean;
 }
@@ -138,8 +142,8 @@ export function asBoolean(buf: Buffer): boolean {
 
 export interface Entry<K extends Key = string> {
   keyBuf: Buffer;
-  key(): K;
   valueBuf: Buffer;
+  key(): K;
   valueString(): string;
   valueNumber(): number;
   valueBoolean(): boolean;
@@ -187,7 +191,7 @@ export interface DbDupsort<K extends Key = string, V extends Key = string>
   addAsync(key: K, value: V, flags?: DupPutFlags): Promise<Buffer | null>;
 }
 
-export interface DupFlags {
+export interface DupFlags extends DbFlags {
   dupFixed?: boolean;
   integerDup?: boolean;
   reverseDup?: boolean;

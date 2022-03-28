@@ -1,7 +1,5 @@
-const hello = require("../build/Release/hello-napi-native");
-const lmdb = require("../build/Release/hello-lmdb-native");
+const lmdb = require("../build/Release/lmdb_napi");
 
 export = {
-  hello: hello.Hello,
   lmdb,
 };

@@ -1,8 +1,6 @@
 "use strict";
-const hello = require("../build/Release/hello-napi-native");
-const lmdb = require("../build/Release/hello-lmdb-native");
+const lmdb = require("../build/Release/lmdb_napi");
 module.exports = {
-    hello: hello.Hello,
     lmdb,
 };
 //# sourceMappingURL=binding.js.map
