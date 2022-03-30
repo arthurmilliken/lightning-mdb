@@ -41,7 +41,7 @@ export interface EnvFlags {
     noMemInit?: boolean;
 }
 export interface Env {
-    readonly pEnv: bigint;
+    readonly envp: bigint;
     open(path: string, flags: EnvOptions, mode: number): void;
     copy(path: string, compact?: boolean): void;
     copyFD(fd: number, compact?: boolean): void;
@@ -59,10 +59,9 @@ export interface Env {
     setUserCtx(ctx: Buffer): void;
     getUserCtx(): Buffer;
     beginTxn(readOnly?: false, parent?: Txn): Txn;
-    serialize(): Buffer;
 }
 export interface Txn {
-    readonly pTxn: bigint;
+    readonly txnp: bigint;
     env(): Env;
     id(): number;
     commit(): void;
@@ -87,6 +86,7 @@ export declare type Value = Key | boolean;
 export declare type KeyType = "string" | "number" | "binary";
 export declare type ValueType = "string" | "number" | "binary" | "boolean";
 export interface Database<K extends Key = string> {
+    readonly envp: bigint;
     readonly dbi: number;
     stat(txn: Txn): DbStat;
     flags(txn: Txn): DbFlags;
@@ -111,11 +111,6 @@ export interface CursorOptions<K extends Key = string> {
     limit?: boolean;
     offset?: boolean;
 }
-export declare function key(k: Key): Buffer;
-export declare function value(v: Value): Buffer;
-export declare function asString(buf: Buffer): string;
-export declare function asNumber(buf: Buffer): number;
-export declare function asBoolean(buf: Buffer): boolean;
 export interface Entry<K extends Key = string> {
     keyBuf: Buffer;
     valueBuf: Buffer;
@@ -142,12 +137,6 @@ export interface Cursor<K extends Key = string> {
     findNext(key: K): Entry<K> | null;
     iterator(): Generator<Entry<K>, void, K>;
 }
-export interface DupEntry<K extends Key = string, V extends Key = string> {
-    keyBuf: Buffer;
-    key(): K;
-    valueBuf: Buffer;
-    value(): V;
-}
 export interface CursorPutFlags extends PutFlags {
     current?: boolean;
     multiple?: boolean;
@@ -159,6 +148,8 @@ export interface DbDupsort<K extends Key = string, V extends Key = string> exten
     putAsync(key: K, value: V, flags?: DupPutFlags): Promise<void>;
     add(key: K, value: V, txn: Txn, flags?: DupPutFlags): Buffer | null;
     addAsync(key: K, value: V, flags?: DupPutFlags): Promise<Buffer | null>;
+    delDup(key: K, value: V, txn: Txn): void;
+    delDupAsync(key: K, value: V): Promise<void>;
 }
 export interface DupFlags extends DbFlags {
     dupFixed?: boolean;

@@ -1,26 +1,5 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.asBoolean = exports.asNumber = exports.asString = exports.value = exports.key = void 0;
-function key(k) {
-    throw new Error();
-}
-exports.key = key;
-function value(v) {
-    throw new Error();
-}
-exports.value = value;
-function asString(buf) {
-    throw new Error();
-}
-exports.asString = asString;
-function asNumber(buf) {
-    throw new Error();
-}
-exports.asNumber = asNumber;
-function asBoolean(buf) {
-    throw new Error();
-}
-exports.asBoolean = asBoolean;
 var CursorOp;
 (function (CursorOp) {
     CursorOp[CursorOp["First"] = 0] = "First";
