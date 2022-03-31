@@ -1,6 +1,6 @@
-import { EnvOptions, CursorOp } from "./types";
-
-const { lmdb } = require("./binding");
+import { lmdb } from "./binding";
+import { CursorOp } from "./constants";
+import { EnvOptions } from "./types";
 
 function main() {
   console.log("hello from start!");

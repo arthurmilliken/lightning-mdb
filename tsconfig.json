@@ -1,6 +1,8 @@
 {
   "compilerOptions": {
     "declaration": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
     "lib": ["esnext"],
     "module": "commonjs",
     "outDir": "./dist",

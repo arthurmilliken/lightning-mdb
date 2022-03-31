@@ -47,7 +47,6 @@ export interface EnvOptions extends EnvFlags {
 }
 
 export interface EnvFlags {
-  flags?: number /** bitmask of flags */;
   /** don't fsync metapage after commit */
   noMetaSync?: boolean;
   /** don't fsync after commit */
@@ -58,61 +57,36 @@ export interface EnvFlags {
   noMemInit?: boolean;
 }
 
-export enum EnvFlag {
-  FIXEDMAP = 0x01,
-  NOSUBDIR = 0x4000,
-  NOSYNC = 0x10000,
-  RDONLY = 0x20000,
-  NOMETASYNC = 0x40000,
-  WRITEMAP = 0x80000,
-  MAPASYNC = 0x100000,
-  NOTLS = 0x200000,
-  NOLOCK = 0x400000,
-  NORDAHEAD = 0x800000,
-  NOMEMINIT = 0x1000000,
-}
-
-export interface Env {
+export interface IEnv {
   readonly envp: bigint;
-  open(path: string, flags: EnvOptions, mode: number): void;
+  open(path: string, options: EnvOptions, mode: number): void;
   copy(path: string, compact?: boolean): void;
-  copyFD(fd: number, compact?: boolean): void;
+  copyAsync(path: string, compact?: boolean): Promise<void>;
+  copyfd(fd: number, compact?: boolean): void;
+  copyfdAsync(fd: number, compact?: boolean): Promise<void>;
   stat(): DbStat;
   info(): EnvInfo;
   sync(force?: boolean): void;
   close(): void;
   setFlags(flags: EnvFlags): void;
-  getFlags(): EnvOptions;
+  getOptions(): EnvOptions;
   getPath(): string;
-  getFD(): number;
+  getfd(): number;
   setMapSize(size: number): void;
   getMaxReaders(): number;
   getMaxKeySize(): number;
-  setUserCtx(ctx: Buffer): void;
-  getUserCtx(): Buffer;
-  beginTxn(readOnly?: false, parent?: Txn): Txn;
+  beginTxn(readOnly?: false, parent?: ITxn | null): ITxn;
   getDeadReaders(): number;
-  openDB(name: string | null, flags?: DbFlags | null, txn?: Txn): Database;
+  openDB(name: string | null, flags?: DbFlags | null, txn?: ITxn): Database;
 }
 
-export interface Txn {
+export interface ITxn {
   readonly txnp: bigint;
   commit(): void;
   abort(): void;
   reset(): void;
   renew(): void;
   openDB(name: string | null, flags?: DbFlags): Database;
-}
-
-export enum DbFlag {
-  REVERSEKEY = 0x02,
-  /** use sorted duplicates */
-  DUPSORT = 0x04,
-  INTEGERKEY = 0x08,
-  DUPFIXED = 0x10,
-  INTEGERDUP = 0x20,
-  REVERSEDUP = 0x40,
-  CREATE = 0x40000,
 }
 
 export interface DupFlags extends DbFlags {
@@ -145,17 +119,6 @@ export interface DbFlags {
   integerKey?: boolean;
 }
 
-export enum PutFlag {
-  NOOVERWRITE = 0x10,
-  NODUPDATA = 0x20,
-  /** For mdb_cursor_put: overwrite the current key/data pair */
-  CURRENT = 0x40,
-  RESERVE = 0x10000,
-  APPEND = 0x20000,
-  APPENDDUP = 0x40000,
-  MULTIPLE = 0x80000,
-}
-
 export interface PutFlags {
   flags?: number /** bitmask */;
   /** Don't write if the key already exists. */
@@ -176,27 +139,27 @@ export type ValueType = "string" | "number" | "Buffer" | "boolean";
 export interface Database<K extends Key = string> {
   readonly envp: bigint;
   readonly dbi: number;
-  stat(txn?: Txn): DbStat;
-  flags(txn?: Txn): DbFlags;
-  close(env: Env): void;
-  drop(txn?: Txn, del?: boolean): void;
-  get(key: K, txn?: Txn, zeroCopy?: boolean): Buffer;
-  getString(key: K, txn?: Txn): string;
-  getNumber(key: K, txn?: Txn): number;
-  getBoolean(key: K, txn?: Txn): boolean;
-  put(key: K, value: Value, txn: Txn, flags?: PutFlags): void;
+  stat(txn?: ITxn): DbStat;
+  flags(txn?: ITxn): DbFlags;
+  close(env: IEnv): void;
+  drop(txn?: ITxn, del?: boolean): void;
+  get(key: K, txn?: ITxn, zeroCopy?: boolean): Buffer;
+  getString(key: K, txn?: ITxn): string;
+  getNumber(key: K, txn?: ITxn): number;
+  getBoolean(key: K, txn?: ITxn): boolean;
+  put(key: K, value: Value, txn: ITxn, flags?: PutFlags): void;
   putAsync(key: K, value: Value, flags?: PutFlags): Promise<void>;
   add(
     key: K,
     value: Value,
-    txn: Txn,
+    txn: ITxn,
     flags?: PutFlags,
     zeroCopy?: boolean
   ): Buffer | null;
   addAsync(key: K, value: Value, flags?: PutFlags): Promise<Buffer | null>;
-  del(key: K, txn: Txn): void;
+  del(key: K, txn: ITxn): void;
   delAsync(key: K): Promise<void>;
-  cursor(options: CursorOptions<K>, txn?: Txn): Cursor<K>;
+  cursor(options: CursorOptions<K>, txn?: ITxn): Cursor<K>;
   compare(a: K, b: K): number;
 }
 
@@ -224,7 +187,7 @@ export interface Cursor<K extends Key = string> {
   readonly txnp: bigint;
   readonly options: CursorOptions;
   close(): void;
-  renew(txn: Txn): void;
+  renew(txn: ITxn): void;
   put(key: Buffer, value: Buffer, flags: CursorPutFlags): void;
   del(noDupData?: boolean): void;
 
@@ -246,19 +209,19 @@ export interface CursorPutFlags extends PutFlags {
 
 export interface DbDupsort<K extends Key = string, V extends Key = string>
   extends Database<K> {
-  getFlags(txn?: Txn): DupFlags;
-  put(key: K, value: V, txn: Txn, flags: DupPutFlags): void;
-  put(key: K, value: V, txn: Txn, flags?: DupPutFlags): void;
+  getFlags(txn?: ITxn): DupFlags;
+  put(key: K, value: V, txn: ITxn, flags: DupPutFlags): void;
+  put(key: K, value: V, txn: ITxn, flags?: DupPutFlags): void;
   putAsync(key: K, value: V, flags?: DupPutFlags): Promise<void>;
   add(
     key: K,
     value: V,
-    txn: Txn,
+    txn: ITxn,
     flags?: DupPutFlags,
     zeroCopy?: boolean
   ): Buffer | null;
   addAsync(key: K, value: V, flags?: DupPutFlags): Promise<Buffer | null>;
-  delDup(key: K, value: V, txn: Txn): void;
+  delDup(key: K, value: V, txn: ITxn): void;
   delDupAsync(key: K, value: V): Promise<void>;
   compareData(a: V, b: V): number;
 }
@@ -286,28 +249,6 @@ export interface DupCursorOptions<
   startValue?: V;
   endValue?: V;
   paginated?: boolean /** fetch one "page" at a time */;
-}
-
-export enum CursorOp {
-  First = 0,
-  FirstDup /* dupsort */,
-  GetBoth /* dupsort */,
-  GetBothRange /* dupsort */,
-  GetCurrent,
-  GetMultiple /* dupfixed */,
-  Last,
-  LastDup /* dupsort */,
-  Next,
-  NextDup /* dupsort */,
-  NextMultiple /* dupfixed */,
-  NextNoDup /* dupsort */,
-  Prev,
-  PrevDup /* dupsort */,
-  PrevNoDup /* dupsort */,
-  Set,
-  SetKey,
-  SetRange,
-  PrevMultiple /* dupfixed */,
 }
 
 interface lmdb {

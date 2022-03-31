@@ -44,7 +44,6 @@ export interface EnvOptions extends EnvFlags {
     maxDBs?: number;
 }
 export interface EnvFlags {
-    flags?: number /** bitmask of flags */;
     /** don't fsync metapage after commit */
     noMetaSync?: boolean;
     /** don't fsync after commit */
@@ -54,58 +53,35 @@ export interface EnvFlags {
     /** don't initialize malloc'd memory before writing to datafile */
     noMemInit?: boolean;
 }
-export declare enum EnvFlag {
-    FIXEDMAP = 1,
-    NOSUBDIR = 16384,
-    NOSYNC = 65536,
-    RDONLY = 131072,
-    NOMETASYNC = 262144,
-    WRITEMAP = 524288,
-    MAPASYNC = 1048576,
-    NOTLS = 2097152,
-    NOLOCK = 4194304,
-    NORDAHEAD = 8388608,
-    NOMEMINIT = 16777216
-}
-export interface Env {
+export interface IEnv {
     readonly envp: bigint;
-    open(path: string, flags: EnvOptions, mode: number): void;
+    open(path: string, options: EnvOptions, mode: number): void;
     copy(path: string, compact?: boolean): void;
+    copyAsync(path: string, compact?: boolean): Promise<void>;
     copyFD(fd: number, compact?: boolean): void;
+    copyFDAsync(fd: number, compact?: boolean): Promise<void>;
     stat(): DbStat;
     info(): EnvInfo;
     sync(force?: boolean): void;
     close(): void;
     setFlags(flags: EnvFlags): void;
-    getFlags(): EnvOptions;
+    getOptions(): EnvOptions;
     getPath(): string;
     getFD(): number;
     setMapSize(size: number): void;
     getMaxReaders(): number;
     getMaxKeySize(): number;
-    setUserCtx(ctx: Buffer): void;
-    getUserCtx(): Buffer;
-    beginTxn(readOnly?: false, parent?: Txn): Txn;
+    beginTxn(readOnly?: false, parent?: ITxn | null): ITxn;
     getDeadReaders(): number;
-    openDB(name: string | null, flags?: DbFlags | null, txn?: Txn): Database;
+    openDB(name: string | null, flags?: DbFlags | null, txn?: ITxn): Database;
 }
-export interface Txn {
+export interface ITxn {
     readonly txnp: bigint;
     commit(): void;
     abort(): void;
     reset(): void;
     renew(): void;
     openDB(name: string | null, flags?: DbFlags): Database;
-}
-export declare enum DbFlag {
-    REVERSEKEY = 2,
-    /** use sorted duplicates */
-    DUPSORT = 4,
-    INTEGERKEY = 8,
-    DUPFIXED = 16,
-    INTEGERDUP = 32,
-    REVERSEDUP = 64,
-    CREATE = 262144
 }
 export interface DupFlags extends DbFlags {
     /** sorted dup items have fixed size */
@@ -134,16 +110,6 @@ export interface DbFlags {
      *  The keys must all be of the same size. */
     integerKey?: boolean;
 }
-export declare enum PutFlag {
-    NOOVERWRITE = 16,
-    NODUPDATA = 32,
-    /** For mdb_cursor_put: overwrite the current key/data pair */
-    CURRENT = 64,
-    RESERVE = 65536,
-    APPEND = 131072,
-    APPENDDUP = 262144,
-    MULTIPLE = 524288
-}
 export interface PutFlags {
     flags?: number /** bitmask */;
     /** Don't write if the key already exists. */
@@ -161,21 +127,21 @@ export declare type ValueType = "string" | "number" | "Buffer" | "boolean";
 export interface Database<K extends Key = string> {
     readonly envp: bigint;
     readonly dbi: number;
-    stat(txn?: Txn): DbStat;
-    flags(txn?: Txn): DbFlags;
-    close(env: Env): void;
-    drop(txn?: Txn, del?: boolean): void;
-    get(key: K, txn?: Txn, zeroCopy?: boolean): Buffer;
-    getString(key: K, txn?: Txn): string;
-    getNumber(key: K, txn?: Txn): number;
-    getBoolean(key: K, txn?: Txn): boolean;
-    put(key: K, value: Value, txn: Txn, flags?: PutFlags): void;
+    stat(txn?: ITxn): DbStat;
+    flags(txn?: ITxn): DbFlags;
+    close(env: IEnv): void;
+    drop(txn?: ITxn, del?: boolean): void;
+    get(key: K, txn?: ITxn, zeroCopy?: boolean): Buffer;
+    getString(key: K, txn?: ITxn): string;
+    getNumber(key: K, txn?: ITxn): number;
+    getBoolean(key: K, txn?: ITxn): boolean;
+    put(key: K, value: Value, txn: ITxn, flags?: PutFlags): void;
     putAsync(key: K, value: Value, flags?: PutFlags): Promise<void>;
-    add(key: K, value: Value, txn: Txn, flags?: PutFlags, zeroCopy?: boolean): Buffer | null;
+    add(key: K, value: Value, txn: ITxn, flags?: PutFlags, zeroCopy?: boolean): Buffer | null;
     addAsync(key: K, value: Value, flags?: PutFlags): Promise<Buffer | null>;
-    del(key: K, txn: Txn): void;
+    del(key: K, txn: ITxn): void;
     delAsync(key: K): Promise<void>;
-    cursor(options: CursorOptions<K>, txn?: Txn): Cursor<K>;
+    cursor(options: CursorOptions<K>, txn?: ITxn): Cursor<K>;
     compare(a: K, b: K): number;
 }
 export interface CursorOptions<K extends Key = string> {
@@ -200,7 +166,7 @@ export interface Cursor<K extends Key = string> {
     readonly txnp: bigint;
     readonly options: CursorOptions;
     close(): void;
-    renew(txn: Txn): void;
+    renew(txn: ITxn): void;
     put(key: Buffer, value: Buffer, flags: CursorPutFlags): void;
     del(noDupData?: boolean): void;
     first(): Entry<K> | null;
@@ -218,13 +184,13 @@ export interface CursorPutFlags extends PutFlags {
     multiple?: boolean;
 }
 export interface DbDupsort<K extends Key = string, V extends Key = string> extends Database<K> {
-    getFlags(txn?: Txn): DupFlags;
-    put(key: K, value: V, txn: Txn, flags: DupPutFlags): void;
-    put(key: K, value: V, txn: Txn, flags?: DupPutFlags): void;
+    getFlags(txn?: ITxn): DupFlags;
+    put(key: K, value: V, txn: ITxn, flags: DupPutFlags): void;
+    put(key: K, value: V, txn: ITxn, flags?: DupPutFlags): void;
     putAsync(key: K, value: V, flags?: DupPutFlags): Promise<void>;
-    add(key: K, value: V, txn: Txn, flags?: DupPutFlags, zeroCopy?: boolean): Buffer | null;
+    add(key: K, value: V, txn: ITxn, flags?: DupPutFlags, zeroCopy?: boolean): Buffer | null;
     addAsync(key: K, value: V, flags?: DupPutFlags): Promise<Buffer | null>;
-    delDup(key: K, value: V, txn: Txn): void;
+    delDup(key: K, value: V, txn: ITxn): void;
     delDupAsync(key: K, value: V): Promise<void>;
     compareData(a: V, b: V): number;
 }
@@ -246,25 +212,4 @@ export interface DupCursorOptions<K extends Key = string, V extends Key = string
     startValue?: V;
     endValue?: V;
     paginated?: boolean /** fetch one "page" at a time */;
-}
-export declare enum CursorOp {
-    First = 0,
-    FirstDup = 1,
-    GetBoth = 2,
-    GetBothRange = 3,
-    GetCurrent = 4,
-    GetMultiple = 5,
-    Last = 6,
-    LastDup = 7,
-    Next = 8,
-    NextDup = 9,
-    NextMultiple = 10,
-    NextNoDup = 11,
-    Prev = 12,
-    PrevDup = 13,
-    PrevNoDup = 14,
-    Set = 15,
-    SetKey = 16,
-    SetRange = 17,
-    PrevMultiple = 18
 }

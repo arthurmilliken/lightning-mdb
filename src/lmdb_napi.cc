@@ -141,7 +141,8 @@ void lmdb_env_close(const CallbackInfo& info) {
   DEBUG_PRINT(("mdb_env_close(%p)\n", dbenv));
 }
 
-void lmdb_env_copy(const CallbackInfo& info) {
+// TODO: make async worker
+void lmdb_env_copy2(const CallbackInfo& info) {
   Env env = info.Env();
   MDB_env *dbenv = unwrap_env(info[0]);
   std::string path = info[1].As<String>().Utf8Value();
@@ -151,7 +152,8 @@ void lmdb_env_copy(const CallbackInfo& info) {
   if (rc) return throw_void(env, rc);
 }
 
-void lmdb_env_copyfd(const CallbackInfo& info) {
+// TODO: make async worker
+void lmdb_env_copyfd2(const CallbackInfo& info) {
   Env env = info.Env();
   unsigned int flags = (unsigned int)info[2].As<Number>().Uint32Value();
   MDB_env *dbenv = unwrap_env(info[0]);
@@ -677,10 +679,9 @@ Object Init(Env env, Object exports) {
   exports.Set(String::New(env, "strerror"), Function::New(env, lmdb_strerror));
   exports.Set(String::New(env, "env_create"), Function::New(env, lmdb_env_create));
   exports.Set(String::New(env, "env_open"), Function::New(env, lmdb_env_open));
-  exports.Set(String::New(env, "env_copy"), Function::New(env, lmdb_env_copy));
+  exports.Set(String::New(env, "env_copy2"), Function::New(env, lmdb_env_copy2));
   exports.Set(String::New(env, "env_close"), Function::New(env, lmdb_env_close));
-  exports.Set(String::New(env, "env_copy"), Function::New(env, lmdb_env_copy));
-  exports.Set(String::New(env, "env_copyfd"), Function::New(env, lmdb_env_copyfd));
+  exports.Set(String::New(env, "env_copyfd2"), Function::New(env, lmdb_env_copyfd2));
   exports.Set(String::New(env, "env_stat"), Function::New(env, lmdb_env_stat));
   exports.Set(String::New(env, "env_info"), Function::New(env, lmdb_env_info));
   exports.Set(String::New(env, "env_sync"), Function::New(env, lmdb_env_sync));

@@ -1,4 +1,2 @@
-declare const _default: {
-    lmdb: any;
-};
-export = _default;
+declare const lmdb: any;
+export { lmdb };
