@@ -1,51 +1,23 @@
 import { lmdb } from "./binding";
-import { EnvFlag, MDB_CP_COMPACT, MDB_RDONLY, SetFlags } from "./constants";
-import {
-  Database,
-  DbFlags,
-  DbStat,
-  EnvFlags,
-  EnvInfo,
-  EnvOptions,
-  IEnv,
-  ITxn,
-} from "./types";
+import { EnvFlag, MDB_CP_COMPACT, SetFlags } from "./constants";
+import { IDatabase, DbFlags } from "./types";
 import { resolve } from "path";
 import { Txn } from "./txn";
 const { isMainThread } = require("worker_threads");
 const { mkdir, stat } = require("fs/promises");
 
-const alreadyClosed = "This Environment is already closed.";
-
-function calcEnvFlags(flags: EnvOptions | EnvFlags) {
-  const asFlags = <EnvFlags>flags;
-  const asOptions = <EnvOptions>flags;
-  return (
-    (asFlags.noMetaSync ? EnvFlag.NOMETASYNC : 0) +
-    (asFlags.noSync ? EnvFlag.NOSYNC : 0) +
-    (asFlags.mapAsync ? EnvFlag.MAPASYNC : 0) +
-    (asFlags.noMemInit ? EnvFlag.NOMEMINIT : 0) +
-    (asOptions.fixedMap ? EnvFlag.FIXEDMAP : 0) +
-    (asOptions.noSubdir ? EnvFlag.NOSUBDIR : 0) +
-    (asOptions.readOnly ? EnvFlag.RDONLY : 0) +
-    (asOptions.writeMap ? EnvFlag.WRITEMAP : 0) +
-    (asOptions.noTLS ? EnvFlag.NOTLS : 0) +
-    (asOptions.noLock ? EnvFlag.NOLOCK : 0) +
-    (asOptions.noReadAhead ? EnvFlag.NORDAHEAD : 0)
-  );
-}
-
-class Env implements IEnv {
+export class Env {
   static deserialize(envp: bigint): Env {
     return new Env(envp);
   }
 
   readonly envp: bigint;
-  private isOpen = false;
+  private _isOpen = false;
+
   constructor(envp?: bigint) {
     if (envp) {
       this.envp = envp;
-      this.isOpen = true;
+      this._isOpen = true;
     } else if (!isMainThread) {
       throw new Error(
         "Cannot use empty constructor from worker. Use Env.deserialize() instead."
@@ -54,12 +26,21 @@ class Env implements IEnv {
       this.envp = lmdb.env_create();
     }
   }
+  get isOpen(): boolean {
+    return this._isOpen;
+  }
   private assertOpen(): void {
-    if (!this.isOpen) throw new Error(alreadyClosed);
+    if (!this.isOpen) throw new Error("This Environment is already closed.");
   }
   serialize(): bigint {
     this.assertOpen();
     return this.envp;
+  }
+  version(): Version {
+    return version();
+  }
+  strerror(code: number): string {
+    return strerror(code);
   }
   open(path: string, options?: EnvOptions, mode = 0o664): void {
     if (options?.mapSize) {
@@ -73,7 +54,7 @@ class Env implements IEnv {
     }
     const flags = calcEnvFlags(Object.assign({}, options));
     lmdb.env_open(this.envp, path, flags, mode);
-    this.isOpen = true;
+    this._isOpen = true;
   }
   copy(path: string, compact?: boolean): void {
     this.assertOpen();
@@ -107,7 +88,7 @@ class Env implements IEnv {
     this.assertOpen();
     const path = this.getPath();
     lmdb.env_close(this.envp);
-    this.isOpen = false;
+    this._isOpen = false;
     delete environments[path];
   }
   setFlags(flags: EnvFlags): void {
@@ -160,10 +141,9 @@ class Env implements IEnv {
     this.assertOpen();
     return lmdb.get_max_keysize(this.envp);
   }
-  beginTxn(readOnly?: false, parent: ITxn | null = null): ITxn {
+  beginTxn(readOnly?: false): Txn {
     this.assertOpen();
-    const txnp = lmdb.txn_begin(this.envp, parent, readOnly ? MDB_RDONLY : 0);
-    return new Txn(txnp);
+    return new Txn(this.envp, readOnly);
   }
   getDeadReaders(): number {
     this.assertOpen();
@@ -172,14 +152,100 @@ class Env implements IEnv {
   openDB(
     name: string | null,
     flags?: DbFlags | null,
-    txn?: ITxn
-  ): Database<string> {
+    txn?: Txn
+  ): IDatabase<string> {
     throw new Error("Method not implemented.");
     // create transaction if necessary
     // open database
     // commit transaction if necessary
     // return database
   }
+}
+
+export function version(): Version {
+  return lmdb.version();
+}
+
+export function strerror(code: number): string {
+  return lmdb.strerror(code);
+}
+
+export interface Version {
+  version: string;
+  major: number;
+  minor: number;
+  patch: number;
+}
+
+export interface EnvInfo {
+  mapAddr: bigint /** Address of map, if fixed (experimental) */;
+  mapSize: number /** Size of the data memory map */;
+  lastPage: number /** ID of the last used page */;
+  lastTxn: number /** ID of the last committed transaction */;
+  maxReaders: number /** max reader slots in the environment */;
+  numReaders: number /** max reader slots used in the environment */;
+}
+
+export interface EnvOptions extends EnvFlags {
+  /** mmap at a fixed address (experimental) */
+  fixedMap?: boolean;
+  /** no environment directory */
+  noSubdir?: boolean;
+  /** read only */
+  readOnly?: boolean;
+  /** use writable mmap */
+  writeMap?: boolean;
+  /** tie reader locktable slots to #MDB_txn objects instead of to threads */
+  noTLS?: boolean;
+  /** don't do any locking, caller must manage their own locks */
+  noLock?: boolean;
+  /** don't do readahead (no effect on Windows) */
+  noReadAhead?: boolean;
+  /** size (in bytes) of memory map */
+  mapSize?: number;
+  /** max number of readers */
+  maxReaders?: number;
+  /** max number of dbs */
+  maxDBs?: number;
+}
+
+export interface EnvFlags {
+  /** don't fsync metapage after commit */
+  noMetaSync?: boolean;
+  /** don't fsync after commit */
+  noSync?: boolean;
+  /** use asynchronous msync when #MDB_WRITEMAP is used */
+  mapAsync?: boolean;
+  /** don't initialize malloc'd memory before writing to datafile */
+  noMemInit?: boolean;
+}
+
+export interface DbStat {
+  pageSize: number /** Size of a database page.
+  This is currently the same for all databases. */;
+  depth: number /** Depth (height) of the B-tree */;
+  branchPages: number /** Number of internal (non-leaf) pages */;
+  leafPages: number /** Number of leaf pages */;
+  overflowPages: number /** Number of overflow pages */;
+  entries: number /** Number of data items */;
+}
+
+function calcEnvFlags(flags: EnvOptions | EnvFlags) {
+  const asFlags = <EnvFlags>flags;
+  const asOptions = <EnvOptions>flags;
+  return (
+    (asFlags.noMetaSync ? EnvFlag.NOMETASYNC : 0) +
+    (asFlags.noSync ? EnvFlag.NOSYNC : 0) +
+    (asFlags.mapAsync ? EnvFlag.MAPASYNC : 0) +
+    (asFlags.noMemInit ? EnvFlag.NOMEMINIT : 0) +
+    (asOptions.fixedMap ? EnvFlag.FIXEDMAP : 0) +
+    (asOptions.noSubdir ? EnvFlag.NOSUBDIR : 0) +
+    (asOptions.readOnly ? EnvFlag.RDONLY : 0) +
+    (asOptions.writeMap ? EnvFlag.WRITEMAP : 0) +
+    (asOptions.noTLS ? EnvFlag.NOTLS : 0) +
+    (asOptions.noLock ? EnvFlag.NOLOCK : 0) +
+    (asOptions.noReadAhead ? EnvFlag.NORDAHEAD : 0)
+  );
 }
 
 const environments: Record<string, Env> = {};

@@ -1,6 +1,5 @@
 import { lmdb } from "./binding";
 import { CursorOp } from "./constants";
-import { EnvOptions } from "./types";
 
 function main() {
   console.log("hello from start!");
@@ -39,9 +38,9 @@ function main() {
   console.log({ a: a.toString(), existing: existing?.toString() });
   const cursorp = lmdb.cursor_open(txnp, dbi);
   for (
-    let entry = lmdb.cursor_get(cursorp, CursorOp.Next);
+    let entry = lmdb.cursor_get(cursorp, CursorOp.NEXT);
     entry;
-    entry = lmdb.cursor_get(cursorp, CursorOp.Next)
+    entry = lmdb.cursor_get(cursorp, CursorOp.NEXT)
   ) {
     const [key, data] = entry;
     let dataStr = data?.toString();
@@ -54,9 +53,9 @@ function main() {
   }
 
   for (
-    let entry = lmdb.cursor_get(cursorp, CursorOp.Last);
+    let entry = lmdb.cursor_get(cursorp, CursorOp.LAST);
     entry;
-    entry = lmdb.cursor_get(cursorp, CursorOp.Prev)
+    entry = lmdb.cursor_get(cursorp, CursorOp.PREV)
   ) {
     const [key, data] = entry;
     let dataStr = data?.toString();

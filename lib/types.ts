@@ -1,93 +1,5 @@
-export interface DbVersion {
-  version: string;
-  major: number;
-  minor: number;
-  patch: number;
-}
-
-export interface DbStat {
-  pageSize: number;
-  depth: number;
-  branchPages: number;
-  leafPages: number;
-  overflowPages: number;
-  entries: number;
-}
-
-export interface EnvInfo {
-  mapAddr: bigint;
-  mapSize: number;
-  lastPage: number;
-  lastTxn: number;
-  maxReaders: number;
-  numReaders: number;
-}
-
-export interface EnvOptions extends EnvFlags {
-  /** mmap at a fixed address (experimental) */
-  fixedMap?: boolean;
-  /** no environment directory */
-  noSubdir?: boolean;
-  /** read only */
-  readOnly?: boolean;
-  /** use writable mmap */
-  writeMap?: boolean;
-  /** tie reader locktable slots to #MDB_txn objects instead of to threads */
-  noTLS?: boolean;
-  /** don't do any locking, caller must manage their own locks */
-  noLock?: boolean;
-  /** don't do readahead (no effect on Windows) */
-  noReadAhead?: boolean;
-  /** size (in bytes) of memory map */
-  mapSize?: number;
-  /** max number of readers */
-  maxReaders?: number;
-  /** max number of dbs */
-  maxDBs?: number;
-}
-
-export interface EnvFlags {
-  /** don't fsync metapage after commit */
-  noMetaSync?: boolean;
-  /** don't fsync after commit */
-  noSync?: boolean;
-  /** use asynchronous msync when #MDB_WRITEMAP is used */
-  mapAsync?: boolean;
-  /** don't initialize malloc'd memory before writing to datafile */
-  noMemInit?: boolean;
-}
-
-export interface IEnv {
-  readonly envp: bigint;
-  open(path: string, options: EnvOptions, mode: number): void;
-  copy(path: string, compact?: boolean): void;
-  copyAsync(path: string, compact?: boolean): Promise<void>;
-  copyfd(fd: number, compact?: boolean): void;
-  copyfdAsync(fd: number, compact?: boolean): Promise<void>;
-  stat(): DbStat;
-  info(): EnvInfo;
-  sync(force?: boolean): void;
-  close(): void;
-  setFlags(flags: EnvFlags): void;
-  getOptions(): EnvOptions;
-  getPath(): string;
-  getfd(): number;
-  setMapSize(size: number): void;
-  getMaxReaders(): number;
-  getMaxKeySize(): number;
-  beginTxn(readOnly?: false, parent?: ITxn | null): ITxn;
-  getDeadReaders(): number;
-  openDB(name: string | null, flags?: DbFlags | null, txn?: ITxn): Database;
-}
-
-export interface ITxn {
-  readonly txnp: bigint;
-  commit(): void;
-  abort(): void;
-  reset(): void;
-  renew(): void;
-  openDB(name: string | null, flags?: DbFlags): Database;
-}
+import { DbStat, Env } from "./env";
+import { Txn } from "./txn";
 
 export interface DupFlags extends DbFlags {
   /** sorted dup items have fixed size */
@@ -136,30 +48,30 @@ export type Value = Key | boolean;
 export type KeyType = "string" | "number" | "Buffer";
 export type ValueType = "string" | "number" | "Buffer" | "boolean";
 
-export interface Database<K extends Key = string> {
+export interface IDatabase<K extends Key = string> {
   readonly envp: bigint;
   readonly dbi: number;
-  stat(txn?: ITxn): DbStat;
-  flags(txn?: ITxn): DbFlags;
-  close(env: IEnv): void;
-  drop(txn?: ITxn, del?: boolean): void;
-  get(key: K, txn?: ITxn, zeroCopy?: boolean): Buffer;
-  getString(key: K, txn?: ITxn): string;
-  getNumber(key: K, txn?: ITxn): number;
-  getBoolean(key: K, txn?: ITxn): boolean;
-  put(key: K, value: Value, txn: ITxn, flags?: PutFlags): void;
+  stat(txn?: Txn): DbStat;
+  flags(txn?: Txn): DbFlags;
+  close(env: Env): void;
+  drop(txn?: Txn, del?: boolean): void;
+  get(key: K, txn?: Txn, zeroCopy?: boolean): Buffer;
+  getString(key: K, txn?: Txn): string;
+  getNumber(key: K, txn?: Txn): number;
+  getBoolean(key: K, txn?: Txn): boolean;
+  put(key: K, value: Value, txn: Txn, flags?: PutFlags): void;
   putAsync(key: K, value: Value, flags?: PutFlags): Promise<void>;
   add(
     key: K,
     value: Value,
-    txn: ITxn,
+    txn: Txn,
     flags?: PutFlags,
     zeroCopy?: boolean
   ): Buffer | null;
   addAsync(key: K, value: Value, flags?: PutFlags): Promise<Buffer | null>;
-  del(key: K, txn: ITxn): void;
+  del(key: K, txn: Txn): void;
   delAsync(key: K): Promise<void>;
-  cursor(options: CursorOptions<K>, txn?: ITxn): Cursor<K>;
+  cursor(options: CursorOptions<K>, txn?: Txn): Cursor<K>;
   compare(a: K, b: K): number;
 }
 
@@ -187,7 +99,7 @@ export interface Cursor<K extends Key = string> {
   readonly txnp: bigint;
   readonly options: CursorOptions;
   close(): void;
-  renew(txn: ITxn): void;
+  renew(txn: Txn): void;
   put(key: Buffer, value: Buffer, flags: CursorPutFlags): void;
   del(noDupData?: boolean): void;
 
@@ -208,20 +120,20 @@ export interface CursorPutFlags extends PutFlags {
 }
 
 export interface DbDupsort<K extends Key = string, V extends Key = string>
-  extends Database<K> {
-  getFlags(txn?: ITxn): DupFlags;
-  put(key: K, value: V, txn: ITxn, flags: DupPutFlags): void;
-  put(key: K, value: V, txn: ITxn, flags?: DupPutFlags): void;
+  extends IDatabase<K> {
+  getFlags(txn?: Txn): DupFlags;
+  put(key: K, value: V, txn: Txn, flags: DupPutFlags): void;
+  put(key: K, value: V, txn: Txn, flags?: DupPutFlags): void;
   putAsync(key: K, value: V, flags?: DupPutFlags): Promise<void>;
   add(
     key: K,
     value: V,
-    txn: ITxn,
+    txn: Txn,
     flags?: DupPutFlags,
     zeroCopy?: boolean
   ): Buffer | null;
   addAsync(key: K, value: V, flags?: DupPutFlags): Promise<Buffer | null>;
-  delDup(key: K, value: V, txn: ITxn): void;
+  delDup(key: K, value: V, txn: Txn): void;
   delDupAsync(key: K, value: V): Promise<void>;
   compareData(a: V, b: V): number;
 }
@@ -249,9 +161,4 @@ export interface DupCursorOptions<
   startValue?: V;
   endValue?: V;
   paginated?: boolean /** fetch one "page" at a time */;
-}
-
-interface lmdb {
-  version(): DbVersion;
-  strerror(code: number): string;
 }
