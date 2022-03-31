@@ -1,5 +1,42 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.CursorOp = exports.PutFlag = exports.DbFlag = exports.EnvFlag = void 0;
+var EnvFlag;
+(function (EnvFlag) {
+    EnvFlag[EnvFlag["FIXEDMAP"] = 1] = "FIXEDMAP";
+    EnvFlag[EnvFlag["NOSUBDIR"] = 16384] = "NOSUBDIR";
+    EnvFlag[EnvFlag["NOSYNC"] = 65536] = "NOSYNC";
+    EnvFlag[EnvFlag["RDONLY"] = 131072] = "RDONLY";
+    EnvFlag[EnvFlag["NOMETASYNC"] = 262144] = "NOMETASYNC";
+    EnvFlag[EnvFlag["WRITEMAP"] = 524288] = "WRITEMAP";
+    EnvFlag[EnvFlag["MAPASYNC"] = 1048576] = "MAPASYNC";
+    EnvFlag[EnvFlag["NOTLS"] = 2097152] = "NOTLS";
+    EnvFlag[EnvFlag["NOLOCK"] = 4194304] = "NOLOCK";
+    EnvFlag[EnvFlag["NORDAHEAD"] = 8388608] = "NORDAHEAD";
+    EnvFlag[EnvFlag["NOMEMINIT"] = 16777216] = "NOMEMINIT";
+})(EnvFlag = exports.EnvFlag || (exports.EnvFlag = {}));
+var DbFlag;
+(function (DbFlag) {
+    DbFlag[DbFlag["REVERSEKEY"] = 2] = "REVERSEKEY";
+    /** use sorted duplicates */
+    DbFlag[DbFlag["DUPSORT"] = 4] = "DUPSORT";
+    DbFlag[DbFlag["INTEGERKEY"] = 8] = "INTEGERKEY";
+    DbFlag[DbFlag["DUPFIXED"] = 16] = "DUPFIXED";
+    DbFlag[DbFlag["INTEGERDUP"] = 32] = "INTEGERDUP";
+    DbFlag[DbFlag["REVERSEDUP"] = 64] = "REVERSEDUP";
+    DbFlag[DbFlag["CREATE"] = 262144] = "CREATE";
+})(DbFlag = exports.DbFlag || (exports.DbFlag = {}));
+var PutFlag;
+(function (PutFlag) {
+    PutFlag[PutFlag["NOOVERWRITE"] = 16] = "NOOVERWRITE";
+    PutFlag[PutFlag["NODUPDATA"] = 32] = "NODUPDATA";
+    /** For mdb_cursor_put: overwrite the current key/data pair */
+    PutFlag[PutFlag["CURRENT"] = 64] = "CURRENT";
+    PutFlag[PutFlag["RESERVE"] = 65536] = "RESERVE";
+    PutFlag[PutFlag["APPEND"] = 131072] = "APPEND";
+    PutFlag[PutFlag["APPENDDUP"] = 262144] = "APPENDDUP";
+    PutFlag[PutFlag["MULTIPLE"] = 524288] = "MULTIPLE";
+})(PutFlag = exports.PutFlag || (exports.PutFlag = {}));
 var CursorOp;
 (function (CursorOp) {
     CursorOp[CursorOp["First"] = 0] = "First";
@@ -21,5 +58,5 @@ var CursorOp;
     CursorOp[CursorOp["SetKey"] = 16] = "SetKey";
     CursorOp[CursorOp["SetRange"] = 17] = "SetRange";
     CursorOp[CursorOp["PrevMultiple"] = 18] = "PrevMultiple"; /* dupfixed */
-})(CursorOp || (CursorOp = {}));
+})(CursorOp = exports.CursorOp || (exports.CursorOp = {}));
 //# sourceMappingURL=types.js.map

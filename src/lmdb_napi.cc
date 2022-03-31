@@ -45,12 +45,41 @@ static inline MDB_txn *unwrap_txn(Value value) {
   return reinterpret_cast<MDB_txn *>(addr);
 }
 
+static inline MDB_cursor *unwrap_cursor(Value value) {
+  uint64_t addr = value.As<BigInt>().Uint64Value(&LOSSLESS);
+  return reinterpret_cast<MDB_cursor *>(addr);
+}
+
 static inline MDB_dbi unwrap_dbi(Value value) {
   return (MDB_dbi)value.As<Number>().Uint32Value();
 }
 
-static inline Buffer<uint8_t> buffer_from_val(Env env, MDB_val *val) {
-  return Buffer<uint8_t>::New(env, (uint8_t *)val->mv_data, val->mv_size);
+static inline MDB_val unwrap_val(Value value) {
+  auto buf = value.As<Buffer<uint8_t>>();
+  MDB_val val;
+  val.mv_size = buf.ByteLength();
+  val.mv_data = buf.Data();
+  return val;
+}
+
+static inline Buffer<uint8_t> buffer_from_val(
+  Env env,
+  MDB_val *val,
+  bool zerocopy
+) {
+  if (zerocopy) {
+    return Buffer<uint8_t>::New(
+      env,
+      (uint8_t *)val->mv_data,
+      val->mv_size
+    );
+  } else {
+    return Buffer<uint8_t>::Copy(
+      env,
+      (const uint8_t*) val->mv_data,
+      val->mv_size
+    );
+  }
 }
 
 ////////////////////////////////////////////////////////
@@ -61,10 +90,10 @@ void lmdb_detach_buffer(const CallbackInfo& info) {
   if (!info[0].IsBuffer()) {
     return;
   }
-  auto buf = info[0].As<Buffer<uint8_t>>().ArrayBuffer();
-  if (!buf.IsDetached()) {
-    DEBUG_PRINT(("detach buffer: %p\n", buf.Data()));
-    buf.Detach();
+  auto abuf = info[0].As<Buffer<uint8_t>>().ArrayBuffer();
+  if (!abuf.IsDetached()) {
+    DEBUG_PRINT(("detach buffer: %p\n", abuf.Data()));
+    abuf.Detach();
   }
 }
 
@@ -102,7 +131,7 @@ void lmdb_env_open(const CallbackInfo& info) {
   unsigned int flags = (unsigned int)info[2].As<Number>().Uint32Value();
   unsigned int mode = (unsigned int)info[3].As<Number>().Uint32Value();
   int rc = mdb_env_open(dbenv, path.c_str(), (unsigned int)flags, (mdb_mode_t)mode);
-  DEBUG_PRINT(("mdb_env_open(%p, '%s', %d, 0%03o): %d\n", dbenv, path.c_str(), flags, mode, rc));
+  DEBUG_PRINT(("mdb_env_open(%p, '%s', 0x%x, 0%03o): %d\n", dbenv, path.c_str(), flags, mode, rc));
   if (rc) return throw_void(env, rc);
 }
 
@@ -118,7 +147,7 @@ void lmdb_env_copy(const CallbackInfo& info) {
   std::string path = info[1].As<String>().Utf8Value();
   unsigned int flags = (unsigned int)info[2].As<Number>().Uint32Value();
   int rc = mdb_env_copy2(dbenv, path.c_str(), flags);
-  DEBUG_PRINT(("mdb_dbenv_copy2(%p, '%s', %d): %d\n", dbenv, path.c_str(), flags, rc));
+  DEBUG_PRINT(("mdb_dbenv_copy2(%p, '%s', 0x%x): %d\n", dbenv, path.c_str(), flags, rc));
   if (rc) return throw_void(env, rc);
 }
 
@@ -129,11 +158,11 @@ void lmdb_env_copyfd(const CallbackInfo& info) {
 #ifdef _WIN32  
   mdb_filehandle_t fd = (mdb_filehandle_t)info[1].As<Number>().Int64Value();
   int rc = mdb_env_copyfd2(dbenv, fd, flags);
-  DEBUG_PRINT(("mdb_dbenv_copyfd2(%p, %p, %d): %d\n", dbenv, fd, flags, rc));
+  DEBUG_PRINT(("mdb_dbenv_copyfd2(%p, %p, 0x%x): %d\n", dbenv, fd, flags, rc));
 #else
   mdb_filehandle_t fd = (mdb_filehandle_t)info[1].As<Number>().Int32Value();
   int rc = mdb_env_copyfd2(dbenv, fd, flags);
-  DEBUG_PRINT(("mdb_dbenv_copyfd2(%p, %d, %d): %d\n", dbenv, fd, flags, rc));
+  DEBUG_PRINT(("mdb_dbenv_copyfd2(%p, %d, 0x%x): %d\n", dbenv, fd, flags, rc));
 #endif
   if (rc) return throw_void(env, rc);
 }
@@ -281,7 +310,7 @@ Value lmdb_txn_begin(const CallbackInfo& info) {
   MDB_txn *txn;
   unsigned int flags = (unsigned int) info[2].As<Number>().Uint32Value();
   int rc = mdb_txn_begin(dbenv, parent, flags, &txn);
-  DEBUG_PRINT(("mdb_txn_begin(%p, %p, %u, %p): %d\n", dbenv, parent, flags, txn, rc));
+  DEBUG_PRINT(("mdb_txn_begin(%p, %p, 0x%x, %p): %d\n", dbenv, parent, flags, txn, rc));
   if (rc) return throw_undefined(env, rc);
   return BigInt::New(env, (uint64_t) txn);
 }
@@ -347,7 +376,7 @@ Value lmdb_dbi_open(const CallbackInfo& info) {
   unsigned int flags = (unsigned int) info[2].As<Number>().Uint32Value();
   DEBUG_PRINT(("lmdb_dbi_open(%p, '%s', %u)\n", txn, name, flags));
   int rc = mdb_dbi_open(txn, name, flags, &dbi);
-  DEBUG_PRINT(("mdb_dbi_open(%p, '%s', %u, %u): %d\n", txn, name, flags, dbi, rc));
+  DEBUG_PRINT(("mdb_dbi_open(%p, '%s', 0x%x, %u): %d\n", txn, name, flags, dbi, rc));
   if (name) free(name);
   if (rc) return throw_undefined(env, rc);
   return Number::New(env, (double)dbi);
@@ -370,7 +399,7 @@ Value lmdb_dbi_flags(const CallbackInfo& info) {
   MDB_dbi dbi = unwrap_dbi(info[1]);
   unsigned int flags;
   int rc = mdb_dbi_flags(txn, dbi, &flags);
-  DEBUG_PRINT(("mdb_dbi_flags(%p, %u, %u): %d\n", txn, dbi, flags, rc));
+  DEBUG_PRINT(("mdb_dbi_flags(%p, %u, 0x%x): %d\n", txn, dbi, flags, rc));
   return Number::New(env, (double)flags);
 }
 
@@ -395,30 +424,38 @@ void lmdb_mdb_drop(const CallbackInfo& info) {
 /**
  * @brief Retrieve data at specified key
  * 
- * @param info 
+ * @param info [ptxn: bigint,
+ *              dbi: number,
+ *              key: Buffer,
+ *              zerocopy?: boolean]
  * @return Value - null if key is not found
  */
 Value lmdb_get(const CallbackInfo& info) {
   Env env = info.Env();
   MDB_txn *txn = unwrap_txn(info[0]);
   MDB_dbi dbi = unwrap_dbi(info[1]);
-  MDB_val key, data;
-  auto keyBuf = info[2].As<Buffer<uint8_t>>();
-  key.mv_size = keyBuf.ByteLength();
-  key.mv_data = keyBuf.Data();
+  MDB_val key = unwrap_val(info[2]);
+  MDB_val data;
   int rc = mdb_get(txn, dbi, &key, &data);
   DEBUG_PRINT(("mdb_get(%p, %u, %p, %p): %d\n", txn, dbi, &key, &data, rc));
-  DEBUG_PRINT(("- key  = %p (%zu bytes)\n", key.mv_data, key.mv_size));
-  DEBUG_PRINT(("- data = %p (%zu bytes)\n", data.mv_data, data.mv_size));
+  DEBUG_PRINT(("- key : %p (%zu bytes)\n", key.mv_data, key.mv_size));
+  DEBUG_PRINT(("- data: %p (%zu bytes)\n", data.mv_data, data.mv_size));
   if (rc == MDB_NOTFOUND) return env.Null();
   else if (rc) return throw_undefined(env, rc);
-  return buffer_from_val(env, &data);
+  bool zerocopy = false;
+  if (info[3].IsBoolean()) zerocopy = info[3].As<Boolean>();
+  return buffer_from_val(env, &data, zerocopy);
 }
 
 /**
  * @brief Put data into DB at specified key
  * 
- * @param info 
+ * @param info [ptxn: bigint,
+ *              dbi: number,
+ *              key: Buffer,
+ *              data: Buffer,
+ *              flags?: number,
+ *              zerocopy?: boolean]
  * @return Value - usually null, but if MDB_NOOVERWRITE flag is passed and
  *         db returns MDB_KEYEXIST, then this will be the current data
  *         corresponding to the given key
@@ -427,10 +464,7 @@ Value lmdb_put(const CallbackInfo& info) {
   Env env = info.Env();
   MDB_txn *txn = unwrap_txn(info[0]);
   MDB_dbi dbi = unwrap_dbi(info[1]);
-  MDB_val key, data;
-  auto keyBuf = info[2].As<Buffer<uint8_t>>();
-  key.mv_data = keyBuf.Data();
-  key.mv_size = keyBuf.ByteLength();
+  MDB_val key = unwrap_val(info[2]);
   size_t maxkeysize = mdb_env_get_maxkeysize(mdb_txn_env(txn));
   if (key.mv_size > maxkeysize) {
     char msg[50];
@@ -438,14 +472,13 @@ Value lmdb_put(const CallbackInfo& info) {
     RangeError::New(env, msg).ThrowAsJavaScriptException();
     return env.Undefined();
   }
-  auto dataBuf = info[3].As<Buffer<uint8_t>>();
-  data.mv_data = dataBuf.Data();
-  data.mv_size = dataBuf.ByteLength();
-  auto flags = (unsigned int) info[4].As<Number>().Uint32Value();
+  MDB_val data = unwrap_val(info[3]);
+  unsigned int flags = 0;
+  if (info[4].IsNumber()) flags = info[4].As<Number>().Uint32Value();
   int rc = mdb_put(txn, dbi, &key, &data, flags);
-  DEBUG_PRINT(("mdb_put(%p, %u, %p, %p, %u): %d\n", txn, dbi, &key, &data, flags, rc));
-  DEBUG_PRINT(("- key  = %p (%zu bytes)\n", key.mv_data, key.mv_size));
-  DEBUG_PRINT(("- data = %p (%zu bytes)\n", data.mv_data, data.mv_size));
+  DEBUG_PRINT(("mdb_put(%p, %u, %p, %p, 0x%x): %d\n", txn, dbi, &key, &data, flags, rc));
+  DEBUG_PRINT(("- key : %p (%zu bytes)\n", key.mv_data, key.mv_size));
+  DEBUG_PRINT(("- data: %p (%zu bytes)\n", data.mv_data, data.mv_size));
   if (rc && rc != MDB_KEYEXIST) return throw_null(env, rc);
   else if (rc == MDB_KEYEXIST) {
     if (flags & MDB_APPEND || flags & MDB_APPENDDUP) {
@@ -453,7 +486,11 @@ Value lmdb_put(const CallbackInfo& info) {
       Error::New(env, msg).ThrowAsJavaScriptException();
       return env.Undefined();
     }
-    else return buffer_from_val(env, &data);
+    else{
+      bool zerocopy = false;
+      if (info[5].IsBoolean()) zerocopy = info[5].As<Boolean>();
+      return buffer_from_val(env, &data, true);
+    } 
   }
   else return env.Null();
 }
@@ -462,23 +499,176 @@ void lmdb_del(const CallbackInfo& info) {
   Env env = info.Env();
   MDB_txn *txn = unwrap_txn(info[0]);
   MDB_dbi dbi = unwrap_dbi(info[1]);
-  MDB_val key, data;
-  auto keyBuf = info[2].As<Buffer<uint8_t>>();
-  key.mv_size = keyBuf.ByteLength();
-  key.mv_data = keyBuf.Data();
+  MDB_val key = unwrap_val(info[2]);
+  MDB_val data;
   if (info[3].IsUndefined() || info[3].IsNull()) {
     data.mv_size = 0;
     data.mv_data = NULL;
   }
   else {
-    auto dataBuf = info[3].As<Buffer<uint8_t>>();
-    data.mv_size = dataBuf.ByteLength();
-    data.mv_data = dataBuf.Data();
+    data = unwrap_val(info[3]);
   }
   int rc = mdb_del(txn, dbi, &key, &data);
   DEBUG_PRINT(("mdb_del(%p, %u, %p, %p): %d\n", txn, dbi, &key, &data, rc));
-  DEBUG_PRINT(("- key  = %p (%zu bytes)\n", key.mv_data, key.mv_size));
-  DEBUG_PRINT(("- data = %p (%zu bytes)\n", data.mv_data, data.mv_size));
+  DEBUG_PRINT(("- key : %p (%zu bytes)\n", key.mv_data, key.mv_size));
+  DEBUG_PRINT(("- data: %p (%zu bytes)\n", data.mv_data, data.mv_size));
+}
+
+Value lmdb_cursor_open(const CallbackInfo& info) {
+  Env env = info.Env();
+  MDB_txn *txn = unwrap_txn(info[0]);
+  MDB_dbi dbi = unwrap_dbi(info[1]);
+  MDB_cursor *cursor;
+  int rc = mdb_cursor_open(txn, dbi, &cursor);
+  DEBUG_PRINT(("mdb_cursor_open(%p, %u, %p): %d\n", txn, dbi, cursor, rc));
+  if (rc) return throw_undefined(env, rc);
+  return BigInt::New(env, (uint64_t)cursor);
+}
+
+void lmdb_cursor_close(const CallbackInfo& info) {
+  Env env = info.Env();
+  MDB_cursor *cursor = unwrap_cursor(info[0]);
+  mdb_cursor_close(cursor);
+  DEBUG_PRINT(("mdb_cursor_close(%p)\n", cursor));
+}
+
+void lmdb_cursor_renew(const CallbackInfo& info) {
+  Env env = info.Env();
+  MDB_txn *txn = unwrap_txn(info[0]);
+  MDB_cursor *cursor = unwrap_cursor(info[1]);
+  int rc = mdb_cursor_renew(txn, cursor);
+  DEBUG_PRINT(("mdb_cursor_renew(%p, %p): %d\n", txn, cursor, rc));
+  if (rc) return throw_void(env, rc);
+}
+
+Value lmdb_cursor_txn(const CallbackInfo& info) {
+  Env env = info.Env();
+  MDB_cursor *cursor = unwrap_cursor(info[0]);
+  MDB_txn *txn = mdb_cursor_txn(cursor);
+  DEBUG_PRINT(("mdb_cursor_txn(%p): %p\n", cursor, txn));
+  return BigInt::New(env, (uint64_t)txn);
+}
+
+Value lmdb_cursor_dbi(const CallbackInfo& info) {
+  Env env = info.Env();
+  MDB_cursor *cursor = unwrap_cursor(info[0]);
+  MDB_dbi dbi = mdb_cursor_dbi(cursor);
+  DEBUG_PRINT(("mdb_cursor_dbi(%p): %u\n", cursor, dbi));
+  return Number::New(env, (double)dbi);
+}
+
+/**
+ * @brief Retrieve by cursor.
+ * 
+ * @param info [cursorp: bigint,
+ *              op: CursorOp, 
+ *              key?: Buffer,
+ *              data?: Buffer,
+ *              zerocopy?: boolean]
+ * @return Array[key: Buffer, data: Buffer], or null if MDB_NOTFOUND
+ */
+Value lmdb_cursor_get(const CallbackInfo& info) {
+  Env env = info.Env();
+  MDB_cursor *cursor = unwrap_cursor(info[0]);
+  MDB_cursor_op op = (MDB_cursor_op) info[1].As<Number>().Int32Value();
+  MDB_val key, data;
+  if (info[1].IsBuffer()) {
+    key = unwrap_val(info[2]);
+  }
+  if (info[2].IsBuffer()) {
+    data = unwrap_val(info[3]);
+  }
+  int rc = mdb_cursor_get(cursor, &key, &data, op);
+  DEBUG_PRINT(("mdb_cursor_get(%p, %p, %p, %d): %d\n", cursor, &key, &data, (int)op, rc));
+  DEBUG_PRINT(("- key : %p (%zu bytes)\n", key.mv_data, key.mv_size));
+  DEBUG_PRINT(("- data: %p (%zu bytes)\n", data.mv_data, data.mv_size));
+  if (rc == MDB_NOTFOUND) {
+    return env.Null();
+  }
+  else if (rc) return throw_undefined(env, rc);
+  bool zerocopy = false;
+  if (info[4].IsBoolean()) zerocopy = info[4].As<Boolean>();
+  auto keyBuf = buffer_from_val(env, &key, zerocopy);
+  auto dataBuf = buffer_from_val(env, &data, zerocopy);
+  auto array = Array::New(env, 2);
+  array[0u] = keyBuf;
+  array[1u] = dataBuf;
+  return array;
+}
+
+/**
+ * @brief Store by cursor.
+ * 
+ * @param info [cursorp: bigint,
+ *              key: Buffer,
+ *              data: Buffer,
+ *              flags?: number]
+ */
+void lmdb_cursor_put(CallbackInfo& info) {
+  Env env = info.Env();
+  MDB_cursor *cursor = unwrap_cursor(info[0]);
+  MDB_val key = unwrap_val(info[1]);
+  MDB_val data = unwrap_val(info[2]);
+  unsigned int flags = 0;
+  if (info[3].IsNumber()) flags = info[3].As<Number>().Int32Value();
+  int rc = mdb_cursor_put(cursor, &key, &data, flags);
+  DEBUG_PRINT(("mdb_cursor_put(%p, %p, %p, 0x%x): %d\n", cursor, &key, &data, flags, rc));
+  DEBUG_PRINT(("- key : %p (%zu bytes)\n", key.mv_data, key.mv_size));
+  DEBUG_PRINT(("- data: %p (%zu bytes)\n", data.mv_data, data.mv_size));
+  if (rc) return throw_void(env, rc);
+}
+
+void lmdb_cursor_del(CallbackInfo& info) {
+  Env env = info.Env();
+  MDB_cursor *cursor = unwrap_cursor(info[0]);
+  unsigned int flags = 0;
+  if (info[1].IsNumber()) flags = info[1].As<Number>().Int32Value();
+  int rc = mdb_cursor_del(cursor, flags);
+  DEBUG_PRINT(("mdb_cursor_del(%p): %d\n", cursor, rc));
+  if (rc) return throw_void(env, rc);
+}
+
+void lmdb_cursor_count(CallbackInfo& info) {
+  Env env = info.Env();
+  MDB_cursor *cursor = unwrap_cursor(info[0]);
+  size_t count;
+  int rc = mdb_cursor_count(cursor, &count);
+}
+
+Value lmdb_cmp(CallbackInfo& info) {
+  Env env = info.Env();
+  MDB_txn *txn = unwrap_txn(info[0]);
+  MDB_dbi dbi = unwrap_dbi(info[1]);
+  MDB_val a = unwrap_val(info[2]);
+  MDB_val b = unwrap_val(info[3]);
+  int cmp = mdb_cmp(txn, dbi, &a, &b);
+  DEBUG_PRINT(("mdb_cmp(%p, %u, %p, %p): %d\n", txn, dbi, &a, &b, cmp));
+  DEBUG_PRINT(("- a: %p (%zu bytes)\n", a.mv_data, a.mv_size));
+  DEBUG_PRINT(("- b: %p (%zu bytes)\n", b.mv_data, b.mv_size));
+  return Number::New(env, (double)cmp);
+}
+
+Value lmdb_dcmp(CallbackInfo& info) {
+  Env env = info.Env();
+  MDB_txn *txn = unwrap_txn(info[0]);
+  MDB_dbi dbi = unwrap_dbi(info[1]);
+  MDB_val a = unwrap_val(info[2]);
+  MDB_val b = unwrap_val(info[3]);
+  int dcmp = mdb_dcmp(txn, dbi, &a, &b);
+  DEBUG_PRINT(("mdb_dcmp(%p, %u, %p, %p): %d\n", txn, dbi, &a, &b, dcmp));
+  DEBUG_PRINT(("- a: %p (%zu bytes)\n", a.mv_data, a.mv_size));
+  DEBUG_PRINT(("- b: %p (%zu bytes)\n", b.mv_data, b.mv_size));
+  return Number::New(env, (double)dcmp);
+}
+
+Value lmdb_reader_check(CallbackInfo& info) {
+  Env env = info.Env();
+  MDB_env *dbenv = unwrap_env(info[0]);
+  int dead;
+  int rc = mdb_reader_check(dbenv, &dead);
+  DEBUG_PRINT(("mdb_reader_check(%p, %d): %d\n", dbenv, dead, rc));
+  if (rc) return throw_undefined(env, rc);
+  return Number::New(env, (double)dead);
 }
 
 Object Init(Env env, Object exports) {
@@ -517,6 +707,18 @@ Object Init(Env env, Object exports) {
   exports.Set(String::New(env, "get"), Function::New(env, lmdb_get));
   exports.Set(String::New(env, "put"), Function::New(env, lmdb_put));
   exports.Set(String::New(env, "del"), Function::New(env, lmdb_del));
+  exports.Set(String::New(env, "cursor_open"), Function::New(env, lmdb_cursor_open));
+  exports.Set(String::New(env, "cursor_close"), Function::New(env, lmdb_cursor_close));
+  exports.Set(String::New(env, "cursor_renew"), Function::New(env, lmdb_cursor_renew));
+  exports.Set(String::New(env, "cursor_txn"), Function::New(env, lmdb_cursor_txn));
+  exports.Set(String::New(env, "cursor_dbi"), Function::New(env, lmdb_cursor_dbi));
+  exports.Set(String::New(env, "cursor_get"), Function::New(env, lmdb_cursor_get));
+  exports.Set(String::New(env, "cursor_put"), Function::New(env, lmdb_cursor_put));
+  exports.Set(String::New(env, "cursor_del"), Function::New(env, lmdb_cursor_del));
+  exports.Set(String::New(env, "cursor_count"), Function::New(env, lmdb_cursor_count));
+  exports.Set(String::New(env, "cmp"), Function::New(env, lmdb_cmp));
+  exports.Set(String::New(env, "dcmp"), Function::New(env, lmdb_dcmp));
+  exports.Set(String::New(env, "reader_check"), Function::New(env, lmdb_reader_check));
   return exports;
 }
 

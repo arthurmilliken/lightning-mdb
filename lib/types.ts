@@ -91,12 +91,12 @@ export interface Env {
   setUserCtx(ctx: Buffer): void;
   getUserCtx(): Buffer;
   beginTxn(readOnly?: false, parent?: Txn): Txn;
+  getDeadReaders(): number;
+  openDB(name: string | null, flags?: DbFlags | null, txn?: Txn): Database;
 }
 
 export interface Txn {
   readonly txnp: bigint;
-  env(): Env;
-  id(): number;
   commit(): void;
   abort(): void;
   reset(): void;
@@ -170,29 +170,34 @@ export interface PutFlags {
 export type Key = string | number | Buffer;
 export type Value = Key | boolean;
 
-export type KeyType = "string" | "number" | "binary";
-export type ValueType = "string" | "number" | "binary" | "boolean";
+export type KeyType = "string" | "number" | "Buffer";
+export type ValueType = "string" | "number" | "Buffer" | "boolean";
 
 export interface Database<K extends Key = string> {
   readonly envp: bigint;
   readonly dbi: number;
-  stat(txn: Txn): DbStat;
-  flags(txn: Txn): DbFlags;
+  stat(txn?: Txn): DbStat;
+  flags(txn?: Txn): DbFlags;
   close(env: Env): void;
   drop(txn?: Txn, del?: boolean): void;
-  get(key: K, txn?: Txn): Buffer;
-  getBufferFast(key: K, txn?: Txn): Buffer;
+  get(key: K, txn?: Txn, zeroCopy?: boolean): Buffer;
   getString(key: K, txn?: Txn): string;
   getNumber(key: K, txn?: Txn): number;
   getBoolean(key: K, txn?: Txn): boolean;
   put(key: K, value: Value, txn: Txn, flags?: PutFlags): void;
   putAsync(key: K, value: Value, flags?: PutFlags): Promise<void>;
-  add(key: K, value: Value, txn: Txn, flags?: PutFlags): Buffer | null;
-  addFast(key: K, value: Value, txn: Txn, flags?: PutFlags): Buffer | null;
+  add(
+    key: K,
+    value: Value,
+    txn: Txn,
+    flags?: PutFlags,
+    zeroCopy?: boolean
+  ): Buffer | null;
   addAsync(key: K, value: Value, flags?: PutFlags): Promise<Buffer | null>;
   del(key: K, txn: Txn): void;
   delAsync(key: K): Promise<void>;
   cursor(options: CursorOptions<K>, txn?: Txn): Cursor<K>;
+  compare(a: K, b: K): number;
 }
 
 export interface CursorOptions<K extends Key = string> {
@@ -201,6 +206,7 @@ export interface CursorOptions<K extends Key = string> {
   reverse?: boolean;
   limit?: boolean;
   offset?: boolean;
+  zeroCopy?: boolean;
 }
 
 export interface Entry<K extends Key = string> {
@@ -210,12 +216,13 @@ export interface Entry<K extends Key = string> {
   valueString(): string;
   valueNumber(): number;
   valueBoolean(): boolean;
+  detach(): void;
 }
 
 export interface Cursor<K extends Key = string> {
-  readonly cursorPtr: number;
-  readonly txn: Txn;
-  readonly db: Database;
+  readonly cursorp: bigint;
+  readonly txnp: bigint;
+  readonly options: CursorOptions;
   close(): void;
   renew(txn: Txn): void;
   put(key: Buffer, value: Buffer, flags: CursorPutFlags): void;
@@ -243,10 +250,17 @@ export interface DbDupsort<K extends Key = string, V extends Key = string>
   put(key: K, value: V, txn: Txn, flags: DupPutFlags): void;
   put(key: K, value: V, txn: Txn, flags?: DupPutFlags): void;
   putAsync(key: K, value: V, flags?: DupPutFlags): Promise<void>;
-  add(key: K, value: V, txn: Txn, flags?: DupPutFlags): Buffer | null;
+  add(
+    key: K,
+    value: V,
+    txn: Txn,
+    flags?: DupPutFlags,
+    zeroCopy?: boolean
+  ): Buffer | null;
   addAsync(key: K, value: V, flags?: DupPutFlags): Promise<Buffer | null>;
   delDup(key: K, value: V, txn: Txn): void;
   delDupAsync(key: K, value: V): Promise<void>;
+  compareData(a: V, b: V): number;
 }
 
 export interface CursorDupsort<K extends Key = string, V extends Key = string>
@@ -274,7 +288,7 @@ export interface DupCursorOptions<
   paginated?: boolean /** fetch one "page" at a time */;
 }
 
-enum CursorOp {
+export enum CursorOp {
   First = 0,
   FirstDup /* dupsort */,
   GetBoth /* dupsort */,
