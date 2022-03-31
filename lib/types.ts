@@ -1,5 +1,6 @@
-import { DbStat, Env } from "./env";
-import { Txn } from "./txn";
+import { DbFlags } from "./database";
+import { DbStat, Environment } from "./environment";
+import { Transaction } from "./transaction";
 
 export interface DupFlags extends DbFlags {
   /** sorted dup items have fixed size */
@@ -18,17 +19,6 @@ export interface DupPutFlags extends PutFlags {
   appendDup?: boolean;
   /** Store multiple data items in one call. Only for #MDB_DUPFIXED. */
   multiple?: boolean;
-}
-
-export interface DbFlags {
-  flags?: number /** bitmask */;
-  /** create DB if not already existing */
-  create?: boolean;
-  /** use reverse string keys */
-  reverseKey?: boolean;
-  /** numeric keys in native byte order: either unsigned int or size_t.
-   *  The keys must all be of the same size. */
-  integerKey?: boolean;
 }
 
 export interface PutFlags {
@@ -51,27 +41,27 @@ export type ValueType = "string" | "number" | "Buffer" | "boolean";
 export interface IDatabase<K extends Key = string> {
   readonly envp: bigint;
   readonly dbi: number;
-  stat(txn?: Txn): DbStat;
-  flags(txn?: Txn): DbFlags;
-  close(env: Env): void;
-  drop(txn?: Txn, del?: boolean): void;
-  get(key: K, txn?: Txn, zeroCopy?: boolean): Buffer;
-  getString(key: K, txn?: Txn): string;
-  getNumber(key: K, txn?: Txn): number;
-  getBoolean(key: K, txn?: Txn): boolean;
-  put(key: K, value: Value, txn: Txn, flags?: PutFlags): void;
+  stat(txn?: Transaction): DbStat;
+  flags(txn?: Transaction): DbFlags;
+  close(env: Environment): void;
+  drop(txn?: Transaction, del?: boolean): void;
+  get(key: K, txn?: Transaction, zeroCopy?: boolean): Buffer;
+  getString(key: K, txn?: Transaction): string;
+  getNumber(key: K, txn?: Transaction): number;
+  getBoolean(key: K, txn?: Transaction): boolean;
+  put(key: K, value: Value, txn: Transaction, flags?: PutFlags): void;
   putAsync(key: K, value: Value, flags?: PutFlags): Promise<void>;
   add(
     key: K,
     value: Value,
-    txn: Txn,
+    txn: Transaction,
     flags?: PutFlags,
     zeroCopy?: boolean
   ): Buffer | null;
   addAsync(key: K, value: Value, flags?: PutFlags): Promise<Buffer | null>;
-  del(key: K, txn: Txn): void;
+  del(key: K, txn: Transaction): void;
   delAsync(key: K): Promise<void>;
-  cursor(options: CursorOptions<K>, txn?: Txn): Cursor<K>;
+  cursor(options: CursorOptions<K>, txn?: Transaction): Cursor<K>;
   compare(a: K, b: K): number;
 }
 
@@ -99,7 +89,7 @@ export interface Cursor<K extends Key = string> {
   readonly txnp: bigint;
   readonly options: CursorOptions;
   close(): void;
-  renew(txn: Txn): void;
+  renew(txn: Transaction): void;
   put(key: Buffer, value: Buffer, flags: CursorPutFlags): void;
   del(noDupData?: boolean): void;
 
@@ -121,19 +111,19 @@ export interface CursorPutFlags extends PutFlags {
 
 export interface DbDupsort<K extends Key = string, V extends Key = string>
   extends IDatabase<K> {
-  getFlags(txn?: Txn): DupFlags;
-  put(key: K, value: V, txn: Txn, flags: DupPutFlags): void;
-  put(key: K, value: V, txn: Txn, flags?: DupPutFlags): void;
+  getFlags(txn?: Transaction): DupFlags;
+  put(key: K, value: V, txn: Transaction, flags: DupPutFlags): void;
+  put(key: K, value: V, txn: Transaction, flags?: DupPutFlags): void;
   putAsync(key: K, value: V, flags?: DupPutFlags): Promise<void>;
   add(
     key: K,
     value: V,
-    txn: Txn,
+    txn: Transaction,
     flags?: DupPutFlags,
     zeroCopy?: boolean
   ): Buffer | null;
   addAsync(key: K, value: V, flags?: DupPutFlags): Promise<Buffer | null>;
-  delDup(key: K, value: V, txn: Txn): void;
+  delDup(key: K, value: V, txn: Transaction): void;
   delDupAsync(key: K, value: V): Promise<void>;
   compareData(a: V, b: V): number;
 }

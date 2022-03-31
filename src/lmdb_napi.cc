@@ -13,6 +13,9 @@ using namespace Napi;
   } while (0)
 #endif
 
+////////////////////////////////////////////////
+// Helper functions
+////////////////////////////////////////////////
 
 static inline Value throw_undefined(Env env, int rc) {
   char *msg = mdb_strerror(rc);
@@ -82,9 +85,9 @@ static inline Buffer<uint8_t> buffer_from_val(
   }
 }
 
-////////////////////////////////////////////////////////
-// LMDB method wrappers start here
-////////////////////////////////////////////////////////
+////////////////////////////////////////////////
+// LMDB function wrappers start here
+////////////////////////////////////////////////
 
 void lmdb_detach_buffer(const CallbackInfo& info) {
   if (!info[0].IsBuffer()) {
@@ -114,6 +117,10 @@ Value lmdb_strerror (const CallbackInfo& info) {
   int err = (int) info[0].As<Number>();
   return String::New(info.Env(), mdb_strerror(err));
 }
+
+////////////////////////////////////////////////
+// MDB_env functions
+////////////////////////////////////////////////
 
 Value lmdb_env_create(const CallbackInfo& info) {
   Env env = info.Env();
@@ -305,6 +312,10 @@ Value lmdb_env_get_maxkeysize(const CallbackInfo& info) {
   return Number::New(env, (double)maxkeysize);
 }
 
+////////////////////////////////////////////////
+// MDB_txn functions
+////////////////////////////////////////////////
+
 Value lmdb_txn_begin(const CallbackInfo& info) {
   Env env = info.Env();
   MDB_env *dbenv = unwrap_env(info[0]);
@@ -361,6 +372,10 @@ void lmdb_txn_renew(const CallbackInfo& info) {
   DEBUG_PRINT(("mdb_txn_renew(%p): %d\n", txn, rc));
   if (rc) return throw_void(env, rc);
 }
+
+////////////////////////////////////////////////
+// MDB_dbi functions
+////////////////////////////////////////////////
 
 Value lmdb_dbi_open(const CallbackInfo& info) {
   Env env = info.Env();
@@ -488,7 +503,7 @@ Value lmdb_put(const CallbackInfo& info) {
       Error::New(env, msg).ThrowAsJavaScriptException();
       return env.Undefined();
     }
-    else{
+    else {
       bool zerocopy = false;
       if (info[5].IsBoolean()) zerocopy = info[5].As<Boolean>();
       return buffer_from_val(env, &data, true);
@@ -515,6 +530,10 @@ void lmdb_del(const CallbackInfo& info) {
   DEBUG_PRINT(("- key : %p (%zu bytes)\n", key.mv_data, key.mv_size));
   DEBUG_PRINT(("- data: %p (%zu bytes)\n", data.mv_data, data.mv_size));
 }
+
+////////////////////////////////////////////////
+// MDB_cursor functions
+////////////////////////////////////////////////
 
 Value lmdb_cursor_open(const CallbackInfo& info) {
   Env env = info.Env();
@@ -636,6 +655,10 @@ void lmdb_cursor_count(CallbackInfo& info) {
   size_t count;
   int rc = mdb_cursor_count(cursor, &count);
 }
+
+////////////////////////////////////////////////
+// Miscellaneous functions
+////////////////////////////////////////////////
 
 Value lmdb_cmp(CallbackInfo& info) {
   Env env = info.Env();

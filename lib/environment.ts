@@ -1,14 +1,20 @@
 import { lmdb } from "./binding";
 import { EnvFlag, MDB_CP_COMPACT, SetFlags } from "./constants";
-import { IDatabase, DbFlags } from "./types";
+import { IDatabase } from "./types";
 import { resolve } from "path";
-import { Txn } from "./txn";
+import { Transaction } from "./transaction";
+import { DbFlags } from "./database";
 const { isMainThread } = require("worker_threads");
 const { mkdir, stat } = require("fs/promises");
 
-export class Env {
-  static deserialize(envp: bigint): Env {
-    return new Env(envp);
+export class Environment {
+  /**
+   * Use this method to create an Environment for use in a Worker Thread
+   * @param serialized a token created by Environment.serialize()
+   * @returns Environment
+   */
+  static deserialize(serialized: bigint): Environment {
+    return new Environment(serialized);
   }
 
   readonly envp: bigint;
@@ -20,7 +26,7 @@ export class Env {
       this._isOpen = true;
     } else if (!isMainThread) {
       throw new Error(
-        "Cannot use empty constructor from worker. Use Env.deserialize() instead."
+        "Cannot use empty constructor from Worker Thread. Use Env.deserialize() instead."
       );
     } else {
       this.envp = lmdb.env_create();
@@ -32,6 +38,11 @@ export class Env {
   private assertOpen(): void {
     if (!this.isOpen) throw new Error("This Environment is already closed.");
   }
+  /**
+   * Serialize this Environment so that it can be passed to Worker Threads.
+   * @returns a token which can be converted into an Environment using
+   *          Environment#deserialize()
+   */
   serialize(): bigint {
     this.assertOpen();
     return this.envp;
@@ -141,9 +152,9 @@ export class Env {
     this.assertOpen();
     return lmdb.get_max_keysize(this.envp);
   }
-  beginTxn(readOnly?: false): Txn {
+  beginTxn(readOnly?: false): Transaction {
     this.assertOpen();
-    return new Txn(this.envp, readOnly);
+    return new Transaction(this.envp, readOnly);
   }
   getDeadReaders(): number {
     this.assertOpen();
@@ -152,7 +163,7 @@ export class Env {
   openDB(
     name: string | null,
     flags?: DbFlags | null,
-    txn?: Txn
+    txn?: Transaction
   ): IDatabase<string> {
     throw new Error("Method not implemented.");
     // create transaction if necessary
@@ -248,18 +259,18 @@ function calcEnvFlags(flags: EnvOptions | EnvFlags) {
   );
 }
 
-const environments: Record<string, Env> = {};
+const environments: Record<string, Environment> = {};
 
 async function openEnv(
   path: string,
   flags?: EnvOptions,
   mode?: number
-): Promise<Env> {
+): Promise<Environment> {
   const absPath = resolve(path);
   if (environments[absPath]) throw new Error(`Env already open at '${path}'`);
   const stats = await stat(absPath);
   await mkdir(absPath, { recursive: true });
-  const env = new Env();
+  const env = new Environment();
   env.open(absPath, flags, mode);
   environments[absPath] = env;
   return env;
