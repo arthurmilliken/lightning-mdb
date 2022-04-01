@@ -24,34 +24,42 @@ function main() {
     const a = Buffer.from("a");
     const b = Buffer.from("b");
     const c = Buffer.from("c");
+    const d = Buffer.from("d");
+    const dval = "durian skins";
     binding_1.lmdb.put(txnp, dbi, a, Buffer.from("apple"), 0);
     binding_1.lmdb.put(txnp, dbi, b, Buffer.from("banana"), 0);
     binding_1.lmdb.put(txnp, dbi, c, Buffer.from("cherry"), 0);
+    const reserve = binding_1.lmdb.put(txnp, dbi, d, dval.length, constants_1.PutFlag.RESERVE);
     const abuf = binding_1.lmdb.get(txnp, dbi, a);
-    console.log({ a: abuf === null || abuf === void 0 ? void 0 : abuf.toString() });
+    console.log({ a: abuf?.toString() });
     const bbuf = binding_1.lmdb.get(txnp, dbi, b);
-    console.log({ b: bbuf === null || bbuf === void 0 ? void 0 : bbuf.toString() });
+    console.log({ b: bbuf?.toString() });
     const cbuf = binding_1.lmdb.get(txnp, dbi, c);
-    console.log({ c: cbuf === null || cbuf === void 0 ? void 0 : cbuf.toString() });
+    console.log({ c: cbuf?.toString() });
+    reserve.write(dval);
+    binding_1.lmdb.detach_buffer(reserve);
+    const dbuf = binding_1.lmdb.get(txnp, dbi, d, true);
+    console.log({ d: dbuf?.toString() });
+    binding_1.lmdb.detach_buffer(dbuf);
     const existing = binding_1.lmdb.put(txnp, dbi, a, Buffer.from("alfalfa"), 0x10);
-    console.log({ a: a.toString(), existing: existing === null || existing === void 0 ? void 0 : existing.toString() });
+    console.log({ a: a.toString(), existing: existing?.toString() });
     const cursorp = binding_1.lmdb.cursor_open(txnp, dbi);
-    for (let entry = binding_1.lmdb.cursor_get(cursorp, constants_1.CursorOp.Next); entry; entry = binding_1.lmdb.cursor_get(cursorp, constants_1.CursorOp.Next)) {
+    for (let entry = binding_1.lmdb.cursor_get(cursorp, constants_1.CursorOp.NEXT); entry; entry = binding_1.lmdb.cursor_get(cursorp, constants_1.CursorOp.NEXT)) {
         const [key, data] = entry;
-        let dataStr = data === null || data === void 0 ? void 0 : data.toString();
+        let dataStr = data?.toString();
         console.log({
             m: "cursor.next()",
-            key: key === null || key === void 0 ? void 0 : key.toString(),
+            key: key?.toString(),
             data: dataStr,
         });
         binding_1.lmdb.cursor_put(cursorp, key, Buffer.from(dataStr + " foo"));
     }
-    for (let entry = binding_1.lmdb.cursor_get(cursorp, constants_1.CursorOp.Last); entry; entry = binding_1.lmdb.cursor_get(cursorp, constants_1.CursorOp.Prev)) {
+    for (let entry = binding_1.lmdb.cursor_get(cursorp, constants_1.CursorOp.LAST); entry; entry = binding_1.lmdb.cursor_get(cursorp, constants_1.CursorOp.PREV)) {
         const [key, data] = entry;
-        let dataStr = data === null || data === void 0 ? void 0 : data.toString();
+        let dataStr = data?.toString();
         console.log({
             m: "cursor.prev()",
-            key: key === null || key === void 0 ? void 0 : key.toString(),
+            key: key?.toString(),
             data: dataStr,
         });
         binding_1.lmdb.cursor_del(cursorp);

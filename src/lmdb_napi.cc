@@ -19,18 +19,21 @@ using namespace Napi;
 
 static inline Value throw_undefined(Env env, int rc) {
   char *msg = mdb_strerror(rc);
+  DEBUG_PRINT(("throw_undefined(%d): %s\n", rc, msg));
   Error::New(env, msg).ThrowAsJavaScriptException();
   return env.Undefined();
 }
 
 static inline Value throw_null(Env env, int rc) {
   char *msg = mdb_strerror(rc);
+  DEBUG_PRINT(("throw_null(%d): %s\n", rc, msg));
   Error::New(env, msg).ThrowAsJavaScriptException();
   return env.Null();
 }
 
 static inline void throw_void(Env env, int rc) {
   char *msg = mdb_strerror(rc);
+  DEBUG_PRINT(("throw_void(%d): %s\n", rc, msg));
   Error::New(env, msg).ThrowAsJavaScriptException();
 }
 
@@ -63,6 +66,12 @@ static inline MDB_val unwrap_val(Value value) {
   val.mv_size = buf.ByteLength();
   val.mv_data = buf.Data();
   return val;
+}
+
+static inline void assign_val(Value value, MDB_val *val) {
+  auto buf = value.As<Buffer<uint8_t>>();
+  val->mv_size = buf.ByteLength();
+  val->mv_data = buf.Data();
 }
 
 static inline Buffer<uint8_t> buffer_from_val(
@@ -391,7 +400,6 @@ Value lmdb_dbi_open(const CallbackInfo& info) {
     name_str.copy(name, name_str.length());
   }
   unsigned int flags = (unsigned int) info[2].As<Number>().Uint32Value();
-  DEBUG_PRINT(("lmdb_dbi_open(%p, '%s', %u)\n", txn, name, flags));
   int rc = mdb_dbi_open(txn, name, flags, &dbi);
   DEBUG_PRINT(("mdb_dbi_open(%p, '%s', 0x%x, %u): %d\n", txn, name, flags, dbi, rc));
   if (name) free(name);
@@ -432,7 +440,7 @@ void lmdb_mdb_drop(const CallbackInfo& info) {
   Env env = info.Env();
   MDB_txn *txn = unwrap_txn(info[0]);
   MDB_dbi dbi = unwrap_dbi(info[1]);
-  int del = (int)info[2].As<Number>().Int32Value();
+  bool del = info[2].As<Boolean>();
   int rc = mdb_drop(txn, dbi, del);
   DEBUG_PRINT(("mdb_drop(%p, %d, %d): %d\n", txn, dbi, del, rc));
   if (rc) return throw_void(env, rc);
@@ -470,12 +478,12 @@ Value lmdb_get(const CallbackInfo& info) {
  * @param info [ptxn: bigint,
  *              dbi: number,
  *              key: Buffer,
- *              data: Buffer,
+ *              data: Buffer | number, // number if flags & MDB_RESERVE
  *              flags?: number,
  *              zerocopy?: boolean]
- * @return Value - usually null, but if MDB_NOOVERWRITE flag is passed and
- *         db returns MDB_KEYEXIST, then this will be the current data
- *         corresponding to the given key
+ * @return Value usually null, except under the following conditions:
+ *         - MDB_KEYEXIST: return data corresponding to given key
+ *         - MDB_RESERVE: return Buffer pointing to reserved space.
  */
 Value lmdb_put(const CallbackInfo& info) {
   Env env = info.Env();
@@ -489,14 +497,22 @@ Value lmdb_put(const CallbackInfo& info) {
     RangeError::New(env, msg).ThrowAsJavaScriptException();
     return env.Undefined();
   }
-  MDB_val data = unwrap_val(info[3]);
+  MDB_val data;
+  if (info[3].IsBuffer()) {
+    assign_val(info[3], &data);
+  }
+  else if (info[3].IsNumber()) {
+    data.mv_size = (size_t) info[3].As<Number>().Int64Value();
+  }
   unsigned int flags = 0;
   if (info[4].IsNumber()) flags = info[4].As<Number>().Uint32Value();
   int rc = mdb_put(txn, dbi, &key, &data, flags);
   DEBUG_PRINT(("mdb_put(%p, %u, %p, %p, 0x%x): %d\n", txn, dbi, &key, &data, flags, rc));
   DEBUG_PRINT(("- key : %p (%zu bytes)\n", key.mv_data, key.mv_size));
   DEBUG_PRINT(("- data: %p (%zu bytes)\n", data.mv_data, data.mv_size));
-  if (rc && rc != MDB_KEYEXIST) return throw_null(env, rc);
+  if (rc && (rc != MDB_KEYEXIST)) {
+    return throw_null(env, rc);
+  }
   else if (rc == MDB_KEYEXIST) {
     if (flags & MDB_APPEND || flags & MDB_APPENDDUP) {
       const char *msg = "Keys and data must be appended in sorted order";
@@ -504,10 +520,12 @@ Value lmdb_put(const CallbackInfo& info) {
       return env.Undefined();
     }
     else {
-      bool zerocopy = false;
-      if (info[5].IsBoolean()) zerocopy = info[5].As<Boolean>();
-      return buffer_from_val(env, &data, true);
+      bool zerocopy = info[5].IsBoolean() ? info[5].As<Boolean>() : false;
+      return buffer_from_val(env, &data, zerocopy);
     } 
+  }
+  else if (flags & MDB_RESERVE) {
+    return buffer_from_val(env, &data, true);
   }
   else return env.Null();
 }
@@ -518,13 +536,7 @@ void lmdb_del(const CallbackInfo& info) {
   MDB_dbi dbi = unwrap_dbi(info[1]);
   MDB_val key = unwrap_val(info[2]);
   MDB_val data;
-  if (info[3].IsUndefined() || info[3].IsNull()) {
-    data.mv_size = 0;
-    data.mv_data = NULL;
-  }
-  else {
-    data = unwrap_val(info[3]);
-  }
+  if (info[3].IsBuffer()) assign_val(info[3], &data);
   int rc = mdb_del(txn, dbi, &key, &data);
   DEBUG_PRINT(("mdb_del(%p, %u, %p, %p): %d\n", txn, dbi, &key, &data, rc));
   DEBUG_PRINT(("- key : %p (%zu bytes)\n", key.mv_data, key.mv_size));

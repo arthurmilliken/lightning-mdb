@@ -23,9 +23,9 @@ export enum DbFlag {
   REVERSEKEY = 0x02,
   /** use sorted duplicates */
   DUPSORT = 0x04,
-  INTEGERKEY = 0x08,
+  // INTEGERKEY = 0x08,
   DUPFIXED = 0x10,
-  INTEGERDUP = 0x20,
+  // INTEGERDUP = 0x20,
   REVERSEDUP = 0x40,
   CREATE = 0x40000,
 }

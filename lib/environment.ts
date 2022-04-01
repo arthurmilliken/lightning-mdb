@@ -1,16 +1,16 @@
 import { lmdb } from "./binding";
 import { EnvFlag, MDB_CP_COMPACT, SetFlags } from "./constants";
-import { IDatabase } from "./types";
-import { resolve } from "path";
+import { dirname, resolve } from "path";
 import { Transaction } from "./transaction";
-import { DbFlags } from "./database";
+import { Database, DbOptions, DbStat } from "./database";
+import { Key } from "./types";
 const { isMainThread } = require("worker_threads");
 const { mkdir, stat } = require("fs/promises");
 
 export class Environment {
   /**
    * Use this method to create an Environment for use in a Worker Thread
-   * @param serialized a token created by Environment.serialize()
+   * @param serialized the return value from Environment.serialize()
    * @returns Environment
    */
   static deserialize(serialized: bigint): Environment {
@@ -63,7 +63,7 @@ export class Environment {
     if (options?.maxDBs) {
       lmdb.set_maxdbs(this.envp, options.maxDBs);
     }
-    const flags = calcEnvFlags(Object.assign({}, options));
+    const flags = options ? calcEnvFlags(options) : 0;
     lmdb.env_open(this.envp, path, flags, mode);
     this._isOpen = true;
   }
@@ -156,20 +156,24 @@ export class Environment {
     this.assertOpen();
     return new Transaction(this.envp, readOnly);
   }
-  getDeadReaders(): number {
+  /**
+   * Check for stale entries in the reader lock table.
+   * @returns number of stale slots that were cleared.
+   */
+  readerCheck(): number {
     this.assertOpen();
     return lmdb.reader_check(this.envp);
   }
-  openDB(
+  openDB<K extends Key = string>(
     name: string | null,
-    flags?: DbFlags | null,
+    options?: DbOptions,
     txn?: Transaction
-  ): IDatabase<string> {
-    throw new Error("Method not implemented.");
-    // create transaction if necessary
-    // open database
-    // commit transaction if necessary
-    // return database
+  ): Database<K> {
+    let useTxn = txn;
+    if (!useTxn) useTxn = new Transaction(this.envp);
+    const db = new Database<K>(this.envp, name, useTxn, options);
+    if (!txn) useTxn.commit();
+    return db;
   }
 }
 
@@ -198,47 +202,37 @@ export interface EnvInfo {
 }
 
 export interface EnvOptions extends EnvFlags {
-  /** mmap at a fixed address (experimental) */
+  /** mmap at a fixed address (experimental). @see lmdb.h for details */
   fixedMap?: boolean;
-  /** no environment directory */
+  /** treat `name` as a filename rather than a directory. @see lmdb.h for details */
   noSubdir?: boolean;
-  /** read only */
+  /** read only. @see lmdb.h for details */
   readOnly?: boolean;
-  /** use writable mmap */
+  /** use writable mmap. @see lmdb.h for details */
   writeMap?: boolean;
-  /** tie reader locktable slots to #MDB_txn objects instead of to threads */
+  /** tie reader locktable slots to #MDB_txn objects instead of to threads. @see lmdb.h for details */
   noTLS?: boolean;
-  /** don't do any locking, caller must manage their own locks */
+  /** don't do any locking, caller must manage their own locks. @see lmdb.h for details */
   noLock?: boolean;
-  /** don't do readahead (no effect on Windows) */
+  /** don't do readahead (no effect on Windows). @see lmdb.h for details */
   noReadAhead?: boolean;
-  /** size (in bytes) of memory map */
+  /** size (in bytes) of memory map. @see lmdb.h for details */
   mapSize?: number;
-  /** max number of readers */
+  /** max number of readers. @see lmdb.h for details */
   maxReaders?: number;
-  /** max number of dbs */
+  /** max number of dbs. @see lmdb.h for details */
   maxDBs?: number;
 }
 
 export interface EnvFlags {
-  /** don't fsync metapage after commit */
+  /** don't fsync metapage after commit. @see lmdb.h for details */
   noMetaSync?: boolean;
-  /** don't fsync after commit */
+  /** don't fsync after commit. @see lmdb.h for details */
   noSync?: boolean;
-  /** use asynchronous msync when #MDB_WRITEMAP is used */
+  /** use asynchronous msync when #MDB_WRITEMAP is used. @see lmdb.h for details */
   mapAsync?: boolean;
-  /** don't initialize malloc'd memory before writing to datafile */
+  /** don't initialize malloc'd memory before writing to datafile. @see lmdb.h for details */
   noMemInit?: boolean;
-}
-
-export interface DbStat {
-  pageSize: number /** Size of a database page.
-  This is currently the same for all databases. */;
-  depth: number /** Depth (height) of the B-tree */;
-  branchPages: number /** Number of internal (non-leaf) pages */;
-  leafPages: number /** Number of leaf pages */;
-  overflowPages: number /** Number of overflow pages */;
-  entries: number /** Number of data items */;
 }
 
 function calcEnvFlags(flags: EnvOptions | EnvFlags) {
@@ -261,15 +255,28 @@ function calcEnvFlags(flags: EnvOptions | EnvFlags) {
 
 const environments: Record<string, Environment> = {};
 
-async function openEnv(
+/**
+ * Create and open an LMDB environment.
+ *
+ * @param path The directory in which the database files reside. This
+ * directory will be created if it does not already exist.
+ * @param flags see @type {EnvOptions} for details
+ * @param mode The UNIX permissions to set on created files and semaphores.
+ * This parameter is ignored on Windows.
+ * @returns a promise which resolves to the open environment.
+ */
+export async function openEnv(
   path: string,
   flags?: EnvOptions,
   mode?: number
 ): Promise<Environment> {
   const absPath = resolve(path);
   if (environments[absPath]) throw new Error(`Env already open at '${path}'`);
-  const stats = await stat(absPath);
-  await mkdir(absPath, { recursive: true });
+  let dir = absPath;
+  if (flags?.noSubdir) {
+    dir = dirname(absPath);
+  }
+  await mkdir(dir, { recursive: true });
   const env = new Environment();
   env.open(absPath, flags, mode);
   environments[absPath] = env;

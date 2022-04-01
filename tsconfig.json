@@ -9,7 +9,7 @@
     "rootDir": "./lib",
     "sourceMap": true,
     "strict": true,
-    "target": "es6",
+    "target": "es2020",
     "types": ["node"],
     "typeRoots": ["node_modules/@types"]
   }

@@ -5,7 +5,7 @@
   },
   "scripts": {
     "prestart": "tsc",
-    "start": "node --enable-source-maps ./dist/env.js",
+    "start": "node --enable-source-maps ./dist/database.js",
     "pretest": "tsc",
     "test": "node ./test/test_binding.js"
   },
@@ -13,13 +13,13 @@
     "node": ">= 16.0.0"
   },
   "gypfile": true,
-  "name": "hello-napi",
+  "name": "lightning-mdb",
   "version": "1.0.0",
-  "description": "Here we go!",
+  "description": "NAPI bindings for LMDB",
   "author": "Arthur Milliken",
-  "license": "ISC",
+  "license": "Apache 2.0",
   "devDependencies": {
-    "@types/node": "^7.0.22",
+    "@types/node": "^16.11.26",
     "typescript": "^3.9.7"
   }
 }

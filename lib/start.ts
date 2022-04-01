@@ -1,5 +1,5 @@
 import { lmdb } from "./binding";
-import { CursorOp } from "./constants";
+import { CursorOp, PutFlag } from "./constants";
 
 function main() {
   console.log("hello from start!");
@@ -25,15 +25,23 @@ function main() {
   const a = Buffer.from("a");
   const b = Buffer.from("b");
   const c = Buffer.from("c");
+  const d = Buffer.from("d");
+  const dval = "durian skins";
   lmdb.put(txnp, dbi, a, Buffer.from("apple"), 0);
   lmdb.put(txnp, dbi, b, Buffer.from("banana"), 0);
   lmdb.put(txnp, dbi, c, Buffer.from("cherry"), 0);
+  const reserve: Buffer = lmdb.put(txnp, dbi, d, dval.length, PutFlag.RESERVE);
   const abuf: Buffer = lmdb.get(txnp, dbi, a);
   console.log({ a: abuf?.toString() });
   const bbuf: Buffer = lmdb.get(txnp, dbi, b);
   console.log({ b: bbuf?.toString() });
   const cbuf: Buffer = lmdb.get(txnp, dbi, c);
   console.log({ c: cbuf?.toString() });
+  reserve.write(dval);
+  lmdb.detach_buffer(reserve);
+  const dbuf: Buffer = lmdb.get(txnp, dbi, d, true);
+  console.log({ d: dbuf?.toString() });
+  lmdb.detach_buffer(dbuf);
   const existing = lmdb.put(txnp, dbi, a, Buffer.from("alfalfa"), 0x10);
   console.log({ a: a.toString(), existing: existing?.toString() });
   const cursorp = lmdb.cursor_open(txnp, dbi);
