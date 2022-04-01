@@ -1,77 +1,84 @@
 "use strict";
-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-    return new (P || (P = Promise))(function (resolve, reject) {
-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-        step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-const { Worker, isMainThread, parentPort, workerData, } = require("worker_threads");
-const { lmdb } = require("./binding");
-class Env {
-    constructor(penv) {
-        if (penv)
-            this.penv = penv;
-        else
-            this.penv = lmdb.env_create();
+const worker_threads_1 = require("worker_threads");
+const promises_1 = require("timers/promises");
+const environment_1 = require("./environment");
+const database_1 = require("./database");
+const os_1 = __importDefault(require("os"));
+const ITERATIONS = 100000;
+async function main() {
+    const start = Date.now();
+    const env = await environment_1.openEnv(".testdb");
+    const db = env.openDB(null);
+    const workers = [];
+    const cpus = os_1.default.cpus().length;
+    for (let i = 0; i < cpus; i++) {
+        workers.push(new worker_threads_1.Worker(__filename, {
+            workerData: {
+                env: env.serialize(),
+                db: db.serialize(),
+                start,
+                i,
+            },
+        }));
     }
-    open(path, flags, mode) {
-        lmdb.env_open(this.penv, path, flags, mode);
-    }
-    close() {
-        if (!isMainThread)
-            throw Error("Env can only be closed from the main thread");
-        lmdb.env_close(this.penv);
-    }
-    stat() {
-        return lmdb.env_stat(this.penv);
-    }
-    serialize() {
-        return this.penv;
-    }
-    static deserialize(penv) {
-        return new Env(penv);
-    }
-}
-if (isMainThread) {
-    function main() {
-        return __awaiter(this, void 0, void 0, function* () {
-            const env = new Env();
-            env.open(".testdb", 0, 0o0664);
-            const stat = env.stat();
-            console.log({ m: "main", stat });
-            const config = { penv: env.serialize() };
-            const worker = new Worker(__filename, { workerData: config });
-            const wstat = yield new Promise((resolve, reject) => {
-                worker.on("message", (message) => {
-                    resolve(message);
-                    worker.terminate();
-                });
-                worker.on("error", (err) => {
-                    reject(err);
-                    worker.terminate();
-                });
-                worker.on("exit", (code) => {
-                    if (code !== 0) {
-                        reject(new Error(`Worker exited with code: ${code}`));
-                    }
-                });
+    await promises_1.setTimeout(1000 - (Date.now() - start));
+    console.log({ ts: Date.now(), m: "main: after sleep." });
+    const s = process.hrtime();
+    for (let i = 0; i < ITERATIONS; i++) {
+        const txn = env.beginTxn(true);
+        const a = db.getString("a", txn);
+        const b = db.getString("b", txn);
+        const c = db.getString("c", txn);
+        if (i < 1) {
+            console.log({
+                m: "main",
+                a: a?.toString(),
+                b: b?.toString(),
+                c: c?.toString(),
             });
-            console.log({ m: "main", wstat });
-            env.close();
-            console.log({ m: "main:env.close()" });
-        });
+        }
+        txn.abort();
     }
+    const d = process.hrtime(s);
+    console.log({ ts: Date.now(), d, i: ITERATIONS, m: "main: done." });
+    await promises_1.setTimeout(500);
+    for (const worker of workers)
+        worker.terminate();
+}
+async function work() {
+    const start = worker_threads_1.workerData.start;
+    const env = environment_1.Environment.deserialize(worker_threads_1.workerData.env);
+    const db = database_1.Database.deserialize(worker_threads_1.workerData.db);
+    const idx = worker_threads_1.workerData.i;
+    await promises_1.setTimeout(1000 - (Date.now() - start));
+    console.log({ ts: Date.now(), m: `(w${idx}): after sleep.` });
+    const s = process.hrtime();
+    for (let i = 0; i < ITERATIONS; i++) {
+        const txn = env.beginTxn(true);
+        const a = db.getString("a", txn);
+        const b = db.getString("b", txn);
+        const c = db.getString("c", txn);
+        if (i < 1) {
+            console.log({
+                m: "work",
+                a: a?.toString(),
+                b: b?.toString(),
+                c: c?.toString(),
+            });
+        }
+        txn.abort();
+    }
+    const d = process.hrtime(s);
+    console.log({ ts: Date.now(), d, i: ITERATIONS, m: `(w${idx}): done.` });
+}
+if (worker_threads_1.isMainThread) {
     main();
 }
 else {
-    const config = workerData;
-    console.log({ m: "worker", config });
-    const env = Env.deserialize(config.penv);
-    const stat = env.stat();
-    parentPort.postMessage(stat);
+    work();
 }
 //# sourceMappingURL=worker.js.map

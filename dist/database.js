@@ -104,7 +104,8 @@ class Database {
      * @param zeroCopy if true, returned Buffer is created using zero-copy
      *        semantics. This buffer must be detached by calling detachBuffer()
      *        before the end of the transaction, and before attempting any other
-     *        operation involving the same key.
+     *        operation involving the same key. This also applies to code being
+     *        run in other threads. Use with caution.
      * @returns Buffer of data item, or null if key not found
      */
     get(key, txn, zeroCopy) {
@@ -114,8 +115,10 @@ class Database {
         }, txn);
     }
     getString(key, txn) {
+        // v8 crashes if two Buffers are created which point to the same memory
+        const zeroCopy = worker_threads_1.isMainThread ? true : false;
         return this.useTransaction((useTxn) => {
-            const buf = this.get(key, useTxn, true);
+            const buf = this.get(key, useTxn, zeroCopy);
             if (!buf)
                 return null;
             const str = buf.toString();
@@ -125,8 +128,10 @@ class Database {
         }, txn);
     }
     getNumber(key, txn) {
+        // v8 crashes if two Buffers are created which point to the same memory
+        const zeroCopy = worker_threads_1.isMainThread ? true : false;
         return this.useTransaction((useTxn) => {
-            const buf = this.get(key, useTxn, true);
+            const buf = this.get(key, useTxn, zeroCopy);
             if (!buf)
                 return null;
             const num = buf.readDoubleBE();
@@ -135,8 +140,10 @@ class Database {
         }, txn);
     }
     getBoolean(key, txn) {
+        // v8 crashes if two Buffers are created which point to the same memory
+        const zeroCopy = worker_threads_1.isMainThread ? true : false;
         return this.useTransaction((useTxn) => {
-            const buf = this.get(key, useTxn, true);
+            const buf = this.get(key, useTxn, zeroCopy);
             if (!buf)
                 return null;
             const bool = buf.readUInt8() ? true : false;

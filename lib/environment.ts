@@ -152,7 +152,7 @@ export class Environment {
     this.assertOpen();
     return lmdb.get_max_keysize(this.envp);
   }
-  beginTxn(readOnly?: false): Transaction {
+  beginTxn(readOnly = false): Transaction {
     this.assertOpen();
     return new Transaction(this.envp, readOnly);
   }

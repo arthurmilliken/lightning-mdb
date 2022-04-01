@@ -6,12 +6,6 @@ import { Buffer } from "buffer";
 import { isMainThread } from "worker_threads";
 import { openEnv } from "./environment";
 
-interface SerializedDB {
-  envp: bigint;
-  dbi: number;
-  keyType: KeyType;
-}
-
 export interface DbOptions {
   /** create DB if not already existing */
   create?: boolean;
@@ -39,10 +33,13 @@ export interface PutFlags {
   reserve?: boolean;
   /** Data is being appended, don't split full pages. */
   append?: boolean;
-  /** for noOverwrite = true, return zero-copy Buffer of value if key already exists
-   * this value is ignored if reserve = true (Buffer will always be zero-copy).
-   * Zero-copy Buffers MUST be detached using detachBuffer() before the next write
-   * operation or end of transaction. */
+  /** For noOverwrite = true, return zero-copy Buffer of value if key already
+   * exists. This value is ignored if `.reserve = true` (Buffer will always be
+   * zero-copy in this case).
+   * Zero-copy Buffers MUST be detached using detachBuffer() before the end of
+   * the current transaction, and before any other operations are attempted
+   * involving the same key. This also applies to code being run in other threads.
+   * Use with caution. */
   zeroCopy?: boolean;
 }
 
@@ -173,7 +170,8 @@ export class Database<K extends Key = string> {
    * @param zeroCopy if true, returned Buffer is created using zero-copy
    *        semantics. This buffer must be detached by calling detachBuffer()
    *        before the end of the transaction, and before attempting any other
-   *        operation involving the same key.
+   *        operation involving the same key. This also applies to code being
+   *        run in other threads. Use with caution.
    * @returns Buffer of data item, or null if key not found
    */
   get(key: K, txn?: Transaction, zeroCopy?: boolean): Buffer | null {
@@ -183,8 +181,10 @@ export class Database<K extends Key = string> {
     }, txn);
   }
   getString(key: K, txn?: Transaction): string | null {
+    // v8 crashes if two Buffers are created which point to the same memory
+    const zeroCopy = isMainThread ? true : false;
     return this.useTransaction((useTxn) => {
-      const buf = this.get(key, useTxn, true);
+      const buf = this.get(key, useTxn, zeroCopy);
       if (!buf) return null;
       const str = buf.toString();
       if (buf) detachBuffer(buf);
@@ -192,8 +192,10 @@ export class Database<K extends Key = string> {
     }, txn);
   }
   getNumber(key: K, txn?: Transaction): number | null {
+    // v8 crashes if two Buffers are created which point to the same memory
+    const zeroCopy = isMainThread ? true : false;
     return this.useTransaction((useTxn) => {
-      const buf = this.get(key, useTxn, true);
+      const buf = this.get(key, useTxn, zeroCopy);
       if (!buf) return null;
       const num = buf.readDoubleBE();
       detachBuffer(buf);
@@ -201,8 +203,10 @@ export class Database<K extends Key = string> {
     }, txn);
   }
   getBoolean(key: K, txn?: Transaction): boolean | null {
+    // v8 crashes if two Buffers are created which point to the same memory
+    const zeroCopy = isMainThread ? true : false;
     return this.useTransaction((useTxn) => {
-      const buf = this.get(key, useTxn, true);
+      const buf = this.get(key, useTxn, zeroCopy);
       if (!buf) return null;
       const bool = buf.readUInt8() ? true : false;
       detachBuffer(buf);
@@ -220,10 +224,10 @@ export class Database<K extends Key = string> {
    *              number of bytes to reserve.
    * @param txn an open writable transaction
    * @param flags see @type {PutFlags} for details.
-   * @returns null if successful
-   *          a buffer containing the existing value if flags.noOverwrite == true
+   * @returns null if successful, or:
+   *          - a buffer containing the existing value if flags.noOverwrite == true
    *            and the key already exists
-   *          an allocated buffer of length `value` if flags.reserve == true
+   *          - an allocated buffer of length `value` if flags.reserve == true
    */
   put(
     key: K,
@@ -346,6 +350,12 @@ export function bufWriteBoolean(buf: Buffer, val: boolean, offset = 0): void {
 
 export function bufReadBoolean(buf: Buffer, offset = 0): boolean {
   return buf.readUInt8(offset) ? true : false;
+}
+
+interface SerializedDB {
+  envp: bigint;
+  dbi: number;
+  keyType: KeyType;
 }
 
 async function main() {

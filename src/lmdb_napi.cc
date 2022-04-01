@@ -3,7 +3,7 @@
 
 using namespace Napi;
 
-#define DEBUG 1
+#define DEBUG 0
 #if DEBUG
 #define DEBUG_PRINT(x) printf x
 #else

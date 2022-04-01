@@ -151,7 +151,7 @@ class Environment {
         this.assertOpen();
         return binding_1.lmdb.get_max_keysize(this.envp);
     }
-    beginTxn(readOnly) {
+    beginTxn(readOnly = false) {
         this.assertOpen();
         return new transaction_1.Transaction(this.envp, readOnly);
     }

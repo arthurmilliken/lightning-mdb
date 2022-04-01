@@ -80,7 +80,8 @@ export declare class Database<K extends Key = string> {
      * @param zeroCopy if true, returned Buffer is created using zero-copy
      *        semantics. This buffer must be detached by calling detachBuffer()
      *        before the end of the transaction, and before attempting any other
-     *        operation involving the same key.
+     *        operation involving the same key. This also applies to code being
+     *        run in other threads. Use with caution.
      * @returns Buffer of data item, or null if key not found
      */
     get(key: K, txn?: Transaction, zeroCopy?: boolean): Buffer | null;

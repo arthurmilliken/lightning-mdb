@@ -37,7 +37,7 @@ export declare class Environment {
     setMapSize(size: number): void;
     getMaxReaders(): number;
     getMaxKeySize(): number;
-    beginTxn(readOnly?: false): Transaction;
+    beginTxn(readOnly?: boolean): Transaction;
     /**
      * Check for stale entries in the reader lock table.
      * @returns number of stale slots that were cleared.
