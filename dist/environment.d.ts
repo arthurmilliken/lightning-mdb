@@ -1,5 +1,6 @@
 import { Transaction } from "./transaction";
 import { Database, DbOptions, DbStat } from "./database";
+import { Key } from "./types";
 export declare class Environment {
     /**
      * Use this method to create an Environment for use in a Worker Thread
@@ -42,7 +43,7 @@ export declare class Environment {
      * @returns number of stale slots that were cleared.
      */
     readerCheck(): number;
-    openDB(name: string | null, options?: DbOptions, txn?: Transaction): Database<string>;
+    openDB<K extends Key = string>(name: string | null, options?: DbOptions, txn?: Transaction): Database<K>;
 }
 export declare function version(): Version;
 export declare function strerror(code: number): string;

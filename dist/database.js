@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.encodeValue = exports.encodeKey = exports.bufReadBoolean = exports.bufWriteBoolean = exports.assertU64 = exports.detachBuffer = exports.calcPutFlags = exports.calcDbFlags = exports.Database = void 0;
+exports.bufReadBoolean = exports.bufWriteBoolean = exports.assertU64 = exports.detachBuffer = exports.calcPutFlags = exports.calcDbFlags = exports.Database = void 0;
 const binding_1 = require("./binding");
 const constants_1 = require("./constants");
 const transaction_1 = require("./transaction");
@@ -8,13 +8,13 @@ const buffer_1 = require("buffer");
 const worker_threads_1 = require("worker_threads");
 const environment_1 = require("./environment");
 class Database {
-    constructor(envpOrSerialized, name, txn, options) {
+    constructor(arg0, name, txn, options) {
         this._isOpen = false;
-        if (typeof envpOrSerialized === "bigint") {
+        if (typeof arg0 === "bigint") {
             if (!worker_threads_1.isMainThread) {
                 throw new Error("Cannot use this constructor from Worker Thread. Use Database.deserialize() instead.");
             }
-            const envp = envpOrSerialized;
+            const envp = arg0;
             name = name || null; // coalesce undefined
             const _flags = options ? calcDbFlags(options) : 0;
             if (!txn)
@@ -24,7 +24,7 @@ class Database {
             this._keyType = options?.keyType || "string";
         }
         else {
-            const serialized = envpOrSerialized;
+            const serialized = arg0;
             this.envp = serialized.envp;
             this.dbi = serialized.dbi;
             this._keyType = serialized.keyType;
@@ -98,16 +98,19 @@ class Database {
         throw new Error("Method not implemented.");
     }
     /**
-     *
+     * Get item from database.
      * @param key
      * @param txn
-     * @param zeroCopy
-     * @returns
+     * @param zeroCopy if true, returned Buffer is created using zero-copy
+     *        semantics. This buffer must be detached by calling detachBuffer()
+     *        before the end of the transaction, and before attempting any other
+     *        operation involving the same key.
+     * @returns Buffer of data item, or null if key not found
      */
     get(key, txn, zeroCopy) {
         this.assertOpen();
         return this.useTransaction((useTxn) => {
-            return binding_1.lmdb.get(useTxn.txnp, this.dbi, encodeKey(key), zeroCopy);
+            return binding_1.lmdb.get(useTxn.txnp, this.dbi, this.encodeKey(key), zeroCopy);
         }, txn);
     }
     getString(key, txn) {
@@ -158,8 +161,8 @@ class Database {
      */
     put(key, value, txn, flags) {
         this.assertOpen();
-        const keyBuf = encodeKey(key);
-        const valueBuf = encodeValue(value);
+        const keyBuf = this.encodeKey(key);
+        const valueBuf = this.encodeValue(value);
         const _flags = flags ? calcPutFlags(flags) : 0;
         const zeroCopy = flags?.zeroCopy ? true : false;
         return binding_1.lmdb.put(txn.txnp, this.dbi, keyBuf, valueBuf, _flags, zeroCopy);
@@ -169,7 +172,7 @@ class Database {
     }
     del(key, txn) {
         this.assertOpen();
-        const keyBuf = encodeKey(key);
+        const keyBuf = this.encodeKey(key);
         binding_1.lmdb.del(txn.txnp, this.dbi, keyBuf);
     }
     delAsync(key) {
@@ -191,8 +194,8 @@ class Database {
      */
     compare(a, b, txn) {
         this.assertOpen();
-        const aBuf = encodeKey(a);
-        const bBuf = encodeKey(b);
+        const aBuf = this.encodeKey(a);
+        const bBuf = this.encodeKey(b);
         let useTxn = txn;
         if (!useTxn)
             useTxn = new transaction_1.Transaction(this.envp, true);
@@ -200,6 +203,39 @@ class Database {
         if (!txn)
             useTxn.abort();
         return cmp;
+    }
+    encodeKey(key) {
+        if (typeof key !== this.keyType) {
+            throw new TypeError(`Key must be of type ${this.keyType}, found ${typeof key} instead`);
+        }
+        if (key instanceof buffer_1.Buffer)
+            return key;
+        if (typeof key === "string")
+            return buffer_1.Buffer.from(key);
+        if (typeof key === "number") {
+            assertU64(key);
+            const buf = buffer_1.Buffer.allocUnsafe(8);
+            buf.writeBigInt64BE(BigInt(key));
+            return buf;
+        }
+        throw new TypeError(`Invalid key: ${key}`);
+    }
+    encodeValue(value) {
+        if (value instanceof buffer_1.Buffer)
+            return value;
+        if (typeof value === "string")
+            return buffer_1.Buffer.from(value);
+        if (typeof value === "number") {
+            const buf = buffer_1.Buffer.allocUnsafe(8);
+            buf.writeDoubleBE(value);
+            return buf;
+        }
+        if (typeof value === "boolean") {
+            const buf = buffer_1.Buffer.allocUnsafe(1);
+            buf.writeUInt8(value ? 1 : 0);
+            return buf;
+        }
+        throw new TypeError(`Invalid value: ${value}`);
     }
 }
 exports.Database = Database;
@@ -235,38 +271,6 @@ function bufReadBoolean(buf, offset = 0) {
     return buf.readUInt8(offset) ? true : false;
 }
 exports.bufReadBoolean = bufReadBoolean;
-function encodeKey(key) {
-    if (key instanceof buffer_1.Buffer)
-        return key;
-    if (typeof key === "string")
-        return buffer_1.Buffer.from(key);
-    if (typeof key === "number") {
-        assertU64(key);
-        const buf = buffer_1.Buffer.allocUnsafe(8);
-        buf.writeBigInt64BE(BigInt(key)); // BE to guarantee stable sorting.
-        return buf;
-    }
-    throw new TypeError(`Invalid key: ${key}`);
-}
-exports.encodeKey = encodeKey;
-function encodeValue(value) {
-    if (value instanceof buffer_1.Buffer)
-        return value;
-    if (typeof value === "string")
-        return buffer_1.Buffer.from(value);
-    if (typeof value === "number") {
-        const buf = buffer_1.Buffer.allocUnsafe(8);
-        buf.writeDoubleBE(value);
-        return buf;
-    }
-    if (typeof value === "boolean") {
-        const buf = buffer_1.Buffer.allocUnsafe(1);
-        buf.writeUInt8(value ? 1 : 0);
-        return buf;
-    }
-    throw new TypeError(`Invalid value: ${value}`);
-}
-exports.encodeValue = encodeValue;
 async function main() {
     const env = await environment_1.openEnv(".testdb");
     console.log("after openEnv()");
@@ -275,15 +279,14 @@ async function main() {
     const txn = env.beginTxn();
     db.clear(txn);
     console.log("after env.beginTxn()");
-    db.put("a", "apple database", txn);
-    db.put("b", "banana database", txn);
-    db.put("c", "cherry database", txn);
+    db.put("a", "apple seeds", txn);
+    db.put("b", "banana peels", txn);
+    db.put("c", "cherry pits", txn);
     console.log({
         a: db.getString("a", txn),
         b: db.getString("b", txn),
         c: db.getString("c", txn),
     });
-    db.clear(txn);
     txn.commit();
     db.close();
     env.close();

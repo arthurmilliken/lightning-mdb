@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { Transaction } from "./transaction";
-import { Cursor, CursorOptions, IDatabase, Key, KeyType, PutFlags, Value } from "./types";
+import { Cursor, CursorOptions, Key, KeyType, Value } from "./types";
 import { Buffer } from "buffer";
 interface SerializedDB {
     envp: bigint;
@@ -23,7 +23,22 @@ export interface DbStat {
     overflowPages: number /** Number of overflow pages */;
     entries: number /** Number of data items */;
 }
-export declare class Database<K extends Key = string> implements IDatabase<K> {
+export interface PutFlags {
+    /** Don't write if the key already exists. */
+    noOverwrite?: boolean;
+    /** Just reserve space for data, don't copy it. Return a
+     * Buffer pointing to the reserved space, which the caller can fill in before
+     * the transaction is committed. */
+    reserve?: boolean;
+    /** Data is being appended, don't split full pages. */
+    append?: boolean;
+    /** for noOverwrite = true, return zero-copy Buffer of value if key already exists
+     * this value is ignored if reserve = true (Buffer will always be zero-copy).
+     * Zero-copy Buffers MUST be detached using detachBuffer() before the next write
+     * operation or end of transaction. */
+    zeroCopy?: boolean;
+}
+export declare class Database<K extends Key = string> {
     /**
      * Use this method to create a Database for use in a Worker Thread
      * @param serialized created by Database.serialize()
@@ -59,11 +74,14 @@ export declare class Database<K extends Key = string> implements IDatabase<K> {
     clear(txn: Transaction): void;
     dropAsync(del?: boolean): void;
     /**
-     *
+     * Get item from database.
      * @param key
      * @param txn
-     * @param zeroCopy
-     * @returns
+     * @param zeroCopy if true, returned Buffer is created using zero-copy
+     *        semantics. This buffer must be detached by calling detachBuffer()
+     *        before the end of the transaction, and before attempting any other
+     *        operation involving the same key.
+     * @returns Buffer of data item, or null if key not found
      */
     get(key: K, txn?: Transaction, zeroCopy?: boolean): Buffer | null;
     getString(key: K, txn?: Transaction): string | null;
@@ -100,6 +118,8 @@ export declare class Database<K extends Key = string> implements IDatabase<K> {
      * @returns < 0 if a < b, 0 if a == b, > 0 if a > b
      */
     compare(a: K, b: K, txn?: Transaction): number;
+    protected encodeKey(key: Key): Buffer;
+    protected encodeValue(value: Value): Buffer;
 }
 export declare function calcDbFlags(flags: DbOptions): number;
 export declare function calcPutFlags(flags: PutFlags): number;
@@ -107,6 +127,4 @@ export declare function detachBuffer(buf: Buffer): void;
 export declare function assertU64(num: number): void;
 export declare function bufWriteBoolean(buf: Buffer, val: boolean, offset?: number): void;
 export declare function bufReadBoolean(buf: Buffer, offset?: number): boolean;
-export declare function encodeKey(key: Key): Buffer;
-export declare function encodeValue(value: Value): Buffer;
 export {};

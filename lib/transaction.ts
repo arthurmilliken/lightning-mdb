@@ -1,7 +1,6 @@
 import { lmdb } from "./binding";
 import { MDB_RDONLY } from "./constants";
-import { DbOptions } from "./database";
-import { IDatabase } from "./types";
+import { Database, DbOptions } from "./database";
 
 export class Transaction {
   readonly txnp: bigint;
@@ -56,7 +55,7 @@ export class Transaction {
   beginChildTxn(): Transaction {
     return new Transaction(this.envp, this.isReadOnly, this.txnp);
   }
-  openDB(name: string | null, flags?: DbOptions): IDatabase<string> {
+  openDB(name: string | null, flags?: DbOptions): Database<string> {
     throw new Error("Method not implemented.");
   }
 }

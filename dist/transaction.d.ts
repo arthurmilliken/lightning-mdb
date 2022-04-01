@@ -1,5 +1,4 @@
-import { DbOptions } from "./database";
-import { IDatabase } from "./types";
+import { Database, DbOptions } from "./database";
 export declare class Transaction {
     readonly txnp: bigint;
     readonly envp: bigint;
@@ -15,5 +14,5 @@ export declare class Transaction {
     reset(): void;
     renew(): void;
     beginChildTxn(): Transaction;
-    openDB(name: string | null, flags?: DbOptions): IDatabase<string>;
+    openDB(name: string | null, flags?: DbOptions): Database<string>;
 }

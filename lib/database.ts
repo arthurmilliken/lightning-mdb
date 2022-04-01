@@ -80,18 +80,18 @@ export class Database<K extends Key = string> {
    */
   constructor(serialized: SerializedDB);
   constructor(
-    envpOrSerialized: bigint | SerializedDB,
+    arg0: bigint | SerializedDB,
     name?: string | null,
     txn?: Transaction,
     options?: DbOptions
   ) {
-    if (typeof envpOrSerialized === "bigint") {
+    if (typeof arg0 === "bigint") {
       if (!isMainThread) {
         throw new Error(
           "Cannot use this constructor from Worker Thread. Use Database.deserialize() instead."
         );
       }
-      const envp = <bigint>envpOrSerialized;
+      const envp = <bigint>arg0;
       name = name || null; // coalesce undefined
       const _flags = options ? calcDbFlags(options) : 0;
       if (!txn) throw new Error("Transaction is required");
@@ -99,7 +99,7 @@ export class Database<K extends Key = string> {
       this.envp = envp;
       this._keyType = options?.keyType || "string";
     } else {
-      const serialized = <SerializedDB>envpOrSerialized;
+      const serialized = <SerializedDB>arg0;
       this.envp = serialized.envp;
       this.dbi = serialized.dbi;
       this._keyType = serialized.keyType;
@@ -167,11 +167,14 @@ export class Database<K extends Key = string> {
     throw new Error("Method not implemented.");
   }
   /**
-   *
+   * Get item from database.
    * @param key
    * @param txn
-   * @param zeroCopy
-   * @returns
+   * @param zeroCopy if true, returned Buffer is created using zero-copy
+   *        semantics. This buffer must be detached by calling detachBuffer()
+   *        before the end of the transaction, and before attempting any other
+   *        operation involving the same key.
+   * @returns Buffer of data item, or null if key not found
    */
   get(key: K, txn?: Transaction, zeroCopy?: boolean): Buffer | null {
     this.assertOpen();
@@ -271,7 +274,7 @@ export class Database<K extends Key = string> {
     return cmp;
   }
 
-  encodeKey(key: Key): Buffer {
+  protected encodeKey(key: Key): Buffer {
     if (typeof key !== this.keyType) {
       throw new TypeError(
         `Key must be of type ${this.keyType}, found ${typeof key} instead`
@@ -288,7 +291,7 @@ export class Database<K extends Key = string> {
     throw new TypeError(`Invalid key: ${key}`);
   }
 
-  encodeValue(value: Value): Buffer {
+  protected encodeValue(value: Value): Buffer {
     if (value instanceof Buffer) return value;
     if (typeof value === "string") return Buffer.from(value);
     if (typeof value === "number") {
@@ -361,7 +364,6 @@ async function main() {
     b: db.getString("b", txn),
     c: db.getString("c", txn),
   });
-  db.clear(txn);
   txn.commit();
   db.close();
   env.close();
