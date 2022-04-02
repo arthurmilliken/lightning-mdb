@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CursorOp = exports.RC = exports.PutFlag = exports.DbFlag = exports.EnvFlag = exports.SetFlags = exports.MDB_RDONLY = exports.MDB_CP_COMPACT = void 0;
+exports.AddMode = exports.CursorOp = exports.RC = exports.PutFlag = exports.DbFlag = exports.EnvFlag = exports.SetFlags = exports.MDB_RDONLY = exports.MDB_CP_COMPACT = void 0;
 exports.MDB_CP_COMPACT = 0x01;
 exports.MDB_RDONLY = 0x20000;
 var SetFlags;
@@ -117,4 +117,10 @@ var CursorOp;
     CursorOp[CursorOp["SET_RANGE"] = 17] = "SET_RANGE";
     CursorOp[CursorOp["PREV_MULTIPLE"] = 18] = "PREV_MULTIPLE"; /* dupfixed only */
 })(CursorOp = exports.CursorOp || (exports.CursorOp = {}));
+var AddMode;
+(function (AddMode) {
+    AddMode[AddMode["RETURN_BOOLEAN"] = 0] = "RETURN_BOOLEAN";
+    AddMode[AddMode["RETURN_CURRENT"] = 1] = "RETURN_CURRENT"; /** return current value if key already exists */
+    AddMode[AddMode["RETURN_ZEROCOPY"] = 2] = "RETURN_ZEROCOPY"; /** return current value with zero-copy semantics if key exists */
+})(AddMode = exports.AddMode || (exports.AddMode = {}));
 //# sourceMappingURL=constants.js.map

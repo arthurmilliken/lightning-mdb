@@ -5,7 +5,7 @@
   },
   "scripts": {
     "prestart": "tsc",
-    "start": "node --enable-source-maps ./dist/worker.js",
+    "start": "node --enable-source-maps ./dist/database.js",
     "pretest": "tsc",
     "test": "node ./test/test_binding.js"
   },

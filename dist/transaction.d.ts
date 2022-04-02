@@ -8,7 +8,7 @@ export declare class Transaction {
     constructor(envp: bigint, readOnly?: boolean, parent?: bigint | null);
     get isOpen(): boolean;
     get isReset(): boolean;
-    private assertOpen;
+    assertOpen(): void;
     commit(): void;
     abort(): void;
     reset(): void;

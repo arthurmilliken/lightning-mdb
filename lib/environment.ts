@@ -17,8 +17,8 @@ export class Environment {
     return new Environment(serialized);
   }
 
-  readonly envp: bigint;
   private _isOpen = false;
+  readonly envp: bigint;
 
   constructor(envp?: bigint) {
     if (envp) {
@@ -156,10 +156,12 @@ export class Environment {
     this.assertOpen();
     return new Transaction(this.envp, readOnly);
   }
-  /**
-   * Check for stale entries in the reader lock table.
-   * @returns number of stale slots that were cleared.
-   */
+  /** Dump the entries in the reader lock table. */
+  readerList(): string[] {
+    return lmdb.reader_list(this.envp);
+  }
+  /** Check for stale entries in the reader lock table.
+   * @returns number of stale slots that were cleared. */
   readerCheck(): number {
     this.assertOpen();
     return lmdb.reader_check(this.envp);

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.bufReadBoolean = exports.bufWriteBoolean = exports.assertU64 = exports.detachBuffer = exports.calcPutFlags = exports.calcDbFlags = exports.Database = void 0;
+exports.bufReadBoolean = exports.bufWriteBoolean = exports.assertU64 = exports.detachBuffer = exports.calcDbFlags = exports.Database = void 0;
 const binding_1 = require("./binding");
 const constants_1 = require("./constants");
 const transaction_1 = require("./transaction");
@@ -19,14 +19,14 @@ class Database {
             const _flags = options ? calcDbFlags(options) : 0;
             if (!txn)
                 throw new Error("Transaction is required");
-            this.dbi = binding_1.lmdb.dbi_open(txn?.txnp, name, _flags);
-            this.envp = envp;
+            this._dbi = binding_1.lmdb.dbi_open(txn?.txnp, name, _flags);
+            this._envp = envp;
             this._keyType = options?.keyType || "string";
         }
         else {
             const serialized = arg0;
-            this.envp = serialized.envp;
-            this.dbi = serialized.dbi;
+            this._envp = serialized.envp;
+            this._dbi = serialized.dbi;
             this._keyType = serialized.keyType;
         }
         this._isOpen = true;
@@ -39,43 +39,34 @@ class Database {
     static deserialize(serialized) {
         return new Database(serialized);
     }
-    serialize() {
-        return { envp: this.envp, dbi: this.dbi, keyType: this.keyType };
+    get envp() {
+        return this._envp;
+    }
+    get dbi() {
+        return this._dbi;
     }
     get isOpen() {
         return this._isOpen;
     }
+    /** Data type for stored keys */
     get keyType() {
         return this._keyType;
     }
-    useTransaction(callback, txn) {
-        let useTxn;
-        if (txn)
-            useTxn = txn;
-        else
-            useTxn = new transaction_1.Transaction(this.envp, true);
-        try {
-            return callback(useTxn);
-        }
-        finally {
-            if (!txn && useTxn.isOpen)
-                useTxn.abort();
-        }
-    }
-    assertOpen() {
-        if (!this.isOpen)
-            throw new Error("Database is already closed.");
+    /** Create serialization token for use with Worker Thread */
+    serialize() {
+        this.assertOpen();
+        return { envp: this.envp, dbi: this._dbi, keyType: this.keyType };
     }
     stat(txn) {
         this.assertOpen();
         return this.useTransaction((useTxn) => {
-            return binding_1.lmdb.stat(useTxn.txnp, this.dbi);
+            return binding_1.lmdb.stat(useTxn.txnp, this._dbi);
         }, txn);
     }
     flags(txn) {
         this.assertOpen();
         return this.useTransaction((useTxn) => {
-            const _flags = binding_1.lmdb.dbi_flags(useTxn.txnp, this.dbi);
+            const _flags = binding_1.lmdb.dbi_flags(useTxn.txnp, this._dbi);
             return {
                 create: _flags & constants_1.DbFlag.CREATE ? true : false,
                 reverseKey: _flags & constants_1.DbFlag.REVERSEKEY ? true : false,
@@ -84,12 +75,13 @@ class Database {
     }
     close() {
         this.assertOpen();
-        binding_1.lmdb.dbi_close(this.envp, this.dbi);
+        binding_1.lmdb.dbi_close(this.envp, this._dbi);
         this._isOpen = false;
     }
     drop(txn, del) {
         this.assertOpen();
-        binding_1.lmdb.mdb_drop(txn.txnp, this.dbi, del || false);
+        txn.assertOpen();
+        binding_1.lmdb.mdb_drop(txn.txnp, this._dbi, del || false);
     }
     clear(txn) {
         this.drop(txn, false);
@@ -111,9 +103,15 @@ class Database {
     get(key, txn, zeroCopy) {
         this.assertOpen();
         return this.useTransaction((useTxn) => {
-            return binding_1.lmdb.get(useTxn.txnp, this.dbi, this.encodeKey(key), zeroCopy);
+            return binding_1.lmdb.get(useTxn.txnp, this._dbi, this.encodeKey(key), zeroCopy);
         }, txn);
     }
+    /**
+     * Retrieve item as string
+     * @param key
+     * @param txn
+     * @returns null if not found
+     */
     getString(key, txn) {
         // v8 crashes if two Buffers are created which point to the same memory
         const zeroCopy = worker_threads_1.isMainThread ? true : false;
@@ -127,6 +125,12 @@ class Database {
             return str;
         }, txn);
     }
+    /**
+     * Retrieve item as number
+     * @param key
+     * @param txn
+     * @returns null if not found
+     */
     getNumber(key, txn) {
         // v8 crashes if two Buffers are created which point to the same memory
         const zeroCopy = worker_threads_1.isMainThread ? true : false;
@@ -139,6 +143,12 @@ class Database {
             return num;
         }, txn);
     }
+    /**
+     * Retrieve item as boolean
+     * @param key
+     * @param txn
+     * @returns null if not found
+     */
     getBoolean(key, txn) {
         // v8 crashes if two Buffers are created which point to the same memory
         const zeroCopy = worker_threads_1.isMainThread ? true : false;
@@ -152,35 +162,74 @@ class Database {
         }, txn);
     }
     /**
-     * Store item into database.
-     *
-     * This function stores key/data pairs in the database. The default behavior
-     * is to enter the new key/data pair, replacing any previously existing key.
-     * @param key the key to store in the database
-     * @param value the value to store. If flags.reserve == true, this should be the
-     *              number of bytes to reserve.
+     * Store item into database
+     * @param key the key to store
+     * @param value the value to store
      * @param txn an open writable transaction
-     * @param flags see @type {PutFlags} for details.
-     * @returns null if successful
-     *          a buffer containing the existing value if flags.noOverwrite == true
-     *            and the key already exists
-     *          an allocated buffer of length `value` if flags.reserve == true
-     */
+     * @param {PutFlags} flags */
     put(key, value, txn, flags) {
         this.assertOpen();
+        txn.assertOpen();
         const keyBuf = this.encodeKey(key);
         const valueBuf = this.encodeValue(value);
-        const _flags = flags ? calcPutFlags(flags) : 0;
-        const zeroCopy = flags?.zeroCopy ? true : false;
-        return binding_1.lmdb.put(txn.txnp, this.dbi, keyBuf, valueBuf, _flags, zeroCopy);
+        binding_1.lmdb.put(txn.txnp, this._dbi, keyBuf, valueBuf, flags?.append ? constants_1.PutFlag.APPEND : 0);
     }
-    putAsync(key, value, flags) {
+    putAsync(key, value) {
         throw new Error("Method not implemented.");
     }
+    /**
+     * Add item into database if the key does not already exist.
+     * @param key the key to store
+     * @param value the value to store
+     * @param txn an open writable transaction
+     * @param {AddMode} mode (default RETURN_BOOLEAN)
+     *        RETURN_BOOLEAN - return true if successful, false if key already exists.
+     *        RETURN_CURRENT - return true if successful, otherwise return current
+     *          value as Buffer.
+     *        RETURN_ZEROCOPY - as RETURN_CURRENT, but returned Buffer is created
+     *          using zero-copy semantics. This buffer must be detached by calling
+     *          detachBuffer() before the end of the transaction, and before
+     *          attempting any other operation involving the same key. This also
+     *          applies to code being run in other threads. Use with caution.
+     * @returns boolean or Buffer. see `mode` param for details */
+    add(key, value, txn, mode = constants_1.AddMode.RETURN_BOOLEAN) {
+        this.assertOpen();
+        txn.assertOpen();
+        const keyBuf = this.encodeKey(key);
+        const valueBuf = this.encodeValue(value);
+        return binding_1.lmdb.add(txn.txnp, this._dbi, keyBuf, valueBuf, mode);
+    }
+    addAsync(key, value, mode) {
+        throw new Error("Method not implementd.");
+    }
+    /**
+     * Reserve space inside the database at the current key, and return a Buffer
+     * which the caller can fill in before the transaction ends.
+     * @param key the key to store
+     * @param size the size in Bytes to allocate for the Buffer
+     * @param txn an open writable transaction
+     * @param flags
+     * @returns an empty buffer of `size` bytes, or false if
+     *          `flags.noOverwrite == true` and key already exists.
+     */
+    reserve(key, size, txn, flags) {
+        this.assertOpen();
+        txn.assertOpen();
+        const keyBuf = this.encodeKey(key);
+        const flagVal = (flags?.append ? constants_1.PutFlag.APPEND : 0) +
+            (flags?.noOverwrite ? constants_1.PutFlag.NOOVERWRITE : 0);
+        return binding_1.lmdb.put(txn.txnp, this._dbi, keyBuf, size, flagVal);
+    }
+    /**
+     * Removes key/data pair from the database.
+     * @param key the key to delete
+     * @param txn an open writeable transaction
+     * @returns true if successful, false if the key does not exist.
+     */
     del(key, txn) {
         this.assertOpen();
         const keyBuf = this.encodeKey(key);
-        binding_1.lmdb.del(txn.txnp, this.dbi, keyBuf);
+        return binding_1.lmdb.del(txn.txnp, this._dbi, keyBuf);
     }
     delAsync(key) {
         throw new Error("Method not implemented.");
@@ -189,14 +238,10 @@ class Database {
         this.assertOpen();
         throw new Error("Method not implemented.");
     }
-    /**
-     * Compare two data items according to a particular database.
-     *
-     * This returns a comparison as if the two data items were keys in the
-     * specified database.
+    /** Return a comparison as if the two items were keys in this database.
      * @param a the first item to compare
      * @param b the second item to compare
-     * @param txn
+     * @param txn an optional transaction context
      * @returns < 0 if a < b, 0 if a == b, > 0 if a > b
      */
     compare(a, b, txn) {
@@ -206,10 +251,29 @@ class Database {
         let useTxn = txn;
         if (!useTxn)
             useTxn = new transaction_1.Transaction(this.envp, true);
-        const cmp = binding_1.lmdb.cmp(useTxn.txnp, this.dbi, aBuf, bBuf);
+        const cmp = binding_1.lmdb.cmp(useTxn.txnp, this._dbi, aBuf, bBuf);
         if (!txn)
             useTxn.abort();
         return cmp;
+    }
+    /** Helper function for handling optional transaction argument */
+    useTransaction(callback, txn) {
+        let useTxn;
+        if (txn)
+            useTxn = txn;
+        else
+            useTxn = new transaction_1.Transaction(this.envp, true);
+        try {
+            return callback(useTxn);
+        }
+        finally {
+            if (!txn && useTxn.isOpen)
+                useTxn.abort();
+        }
+    }
+    assertOpen() {
+        if (!this.isOpen)
+            throw new Error("Database is already closed.");
     }
     encodeKey(key) {
         if (typeof key !== this.keyType) {
@@ -251,12 +315,6 @@ function calcDbFlags(flags) {
         (flags.reverseKey ? constants_1.DbFlag.REVERSEKEY : 0));
 }
 exports.calcDbFlags = calcDbFlags;
-function calcPutFlags(flags) {
-    return ((flags.noOverwrite ? constants_1.PutFlag.NOOVERWRITE : 0) +
-        (flags.reserve ? constants_1.PutFlag.RESERVE : 0) +
-        (flags.append ? constants_1.PutFlag.APPEND : 0));
-}
-exports.calcPutFlags = calcPutFlags;
 function detachBuffer(buf) {
     binding_1.lmdb.detach_buffer(buf);
 }

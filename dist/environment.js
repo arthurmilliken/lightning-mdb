@@ -155,10 +155,12 @@ class Environment {
         this.assertOpen();
         return new transaction_1.Transaction(this.envp, readOnly);
     }
-    /**
-     * Check for stale entries in the reader lock table.
-     * @returns number of stale slots that were cleared.
-     */
+    /** Dump the entries in the reader lock table. */
+    readerList() {
+        return binding_1.lmdb.reader_list(this.envp);
+    }
+    /** Check for stale entries in the reader lock table.
+     * @returns number of stale slots that were cleared. */
     readerCheck() {
         this.assertOpen();
         return binding_1.lmdb.reader_check(this.envp);

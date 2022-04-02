@@ -113,3 +113,9 @@ export enum CursorOp {
   SET_RANGE,
   PREV_MULTIPLE /* dupfixed only */,
 }
+
+export enum AddMode {
+  RETURN_BOOLEAN = 0,
+  RETURN_CURRENT /** return current value if key already exists */,
+  RETURN_ZEROCOPY /** return current value with zero-copy semantics if key exists */,
+}

@@ -8,8 +8,8 @@ export declare class Environment {
      * @returns Environment
      */
     static deserialize(serialized: bigint): Environment;
-    readonly envp: bigint;
     private _isOpen;
+    readonly envp: bigint;
     constructor(envp?: bigint);
     get isOpen(): boolean;
     private assertOpen;
@@ -38,10 +38,10 @@ export declare class Environment {
     getMaxReaders(): number;
     getMaxKeySize(): number;
     beginTxn(readOnly?: boolean): Transaction;
-    /**
-     * Check for stale entries in the reader lock table.
-     * @returns number of stale slots that were cleared.
-     */
+    /** Dump the entries in the reader lock table. */
+    readerList(): string[];
+    /** Check for stale entries in the reader lock table.
+     * @returns number of stale slots that were cleared. */
     readerCheck(): number;
     openDB<K extends Key = string>(name: string | null, options?: DbOptions, txn?: Transaction): Database<K>;
 }

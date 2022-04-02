@@ -382,6 +382,7 @@ void lmdb_txn_renew(const CallbackInfo& info) {
   if (rc) return throw_void(env, rc);
 }
 
+
 ////////////////////////////////////////////////
 // MDB_dbi functions
 ////////////////////////////////////////////////
@@ -472,65 +473,103 @@ Value lmdb_get(const CallbackInfo& info) {
   return buffer_from_val(env, &data, zerocopy);
 }
 
+// Helper macros for PUT operations
+
+#define PUT_PREAMBLE() \
+  Env env = info.Env(); \
+  MDB_txn *txn = unwrap_txn(info[0]); \
+  MDB_dbi dbi = unwrap_dbi(info[1]); \
+  MDB_val key = unwrap_val(info[2]); \
+  size_t maxkeysize = mdb_env_get_maxkeysize(mdb_txn_env(txn)); \
+  if (key.mv_size > maxkeysize) { \
+    char msg[50]; \
+    sprintf(msg, "Key is longer than max keysize %zu bytes", maxkeysize); \
+    RangeError::New(env, msg).ThrowAsJavaScriptException(); \
+    return env.Undefined(); \
+  }
+
+#define PUT_DEBUG_PRINT() \
+  DEBUG_PRINT(("mdb_put(%p, %u, %p, %p, 0x%x): %d\n", txn, dbi, &key, &data, flags, rc)); \
+  DEBUG_PRINT(("- key : %p (%zu bytes)\n", key.mv_data, key.mv_size)); \
+  DEBUG_PRINT(("- data: %p (%zu bytes)\n", data.mv_data, data.mv_size))
+
+#define PUT_CHECK_APPEND() \
+  if (flags & MDB_APPEND || flags & MDB_APPENDDUP) { \
+    const char *msg = "Keys and data must be appended in sorted order"; \
+    Error::New(env, msg).ThrowAsJavaScriptException(); \
+    return env.Undefined(); \
+  }
+
 /**
  * @brief Put data into DB at specified key
  * 
  * @param info [ptxn: bigint,
  *              dbi: number,
  *              key: Buffer,
- *              data: Buffer | number, // number if flags & MDB_RESERVE
- *              flags?: number,
- *              zerocopy?: boolean]
- * @return Value usually null, except under the following conditions:
- *         - MDB_KEYEXIST: return data corresponding to given key
- *         - MDB_RESERVE: return Buffer pointing to reserved space.
+ *              data: Buffer,
+ *              flags?: number]
+ * @return undefined
  */
 Value lmdb_put(const CallbackInfo& info) {
-  Env env = info.Env();
-  MDB_txn *txn = unwrap_txn(info[0]);
-  MDB_dbi dbi = unwrap_dbi(info[1]);
-  MDB_val key = unwrap_val(info[2]);
-  size_t maxkeysize = mdb_env_get_maxkeysize(mdb_txn_env(txn));
-  if (key.mv_size > maxkeysize) {
-    char msg[50];
-    sprintf(msg, "Key is longer than max keysize %zu bytes", maxkeysize);
-    RangeError::New(env, msg).ThrowAsJavaScriptException();
+  PUT_PREAMBLE();
+  MDB_val data = unwrap_val(info[3]);
+  unsigned int flags = info[4].As<Number>().Uint32Value();
+  int rc = mdb_put(txn, dbi, &key, &data, flags);
+  PUT_DEBUG_PRINT();
+  if (rc == MDB_KEYEXIST) {
+    PUT_CHECK_APPEND();
     return env.Undefined();
   }
-  MDB_val data;
-  if (info[3].IsBuffer()) {
-    assign_val(info[3], &data);
-  }
-  else if (info[3].IsNumber()) {
-    data.mv_size = (size_t) info[3].As<Number>().Int64Value();
-  }
-  unsigned int flags = 0;
-  if (info[4].IsNumber()) flags = info[4].As<Number>().Uint32Value();
-  int rc = mdb_put(txn, dbi, &key, &data, flags);
-  DEBUG_PRINT(("mdb_put(%p, %u, %p, %p, 0x%x): %d\n", txn, dbi, &key, &data, flags, rc));
-  DEBUG_PRINT(("- key : %p (%zu bytes)\n", key.mv_data, key.mv_size));
-  DEBUG_PRINT(("- data: %p (%zu bytes)\n", data.mv_data, data.mv_size));
-  if (rc && (rc != MDB_KEYEXIST)) {
-    return throw_null(env, rc);
-  }
-  else if (rc == MDB_KEYEXIST) {
-    if (flags & MDB_APPEND || flags & MDB_APPENDDUP) {
-      const char *msg = "Keys and data must be appended in sorted order";
-      Error::New(env, msg).ThrowAsJavaScriptException();
-      return env.Undefined();
-    }
-    else {
-      bool zerocopy = info[5].IsBoolean() ? info[5].As<Boolean>() : false;
-      return buffer_from_val(env, &data, zerocopy);
-    } 
-  }
-  else if (flags & MDB_RESERVE) {
-    return buffer_from_val(env, &data, true);
-  }
-  else return env.Null();
+  else if (rc) return throw_undefined(env, rc);
+  else return env.Undefined();
 }
 
-void lmdb_del(const CallbackInfo& info) {
+Value lmdb_reserve(const CallbackInfo& info) {
+  PUT_PREAMBLE();
+  MDB_val data;
+  data.mv_size = (size_t) info[3].As<Number>().Int64Value();
+  unsigned int flags = info[4].As<Number>().Uint32Value() + MDB_RESERVE;
+  int rc = mdb_put(txn, dbi, &key, &data, flags);
+  PUT_DEBUG_PRINT();
+  if (rc == MDB_KEYEXIST) {
+    PUT_CHECK_APPEND();
+    return Boolean::New(env, false);
+  }
+  else if (rc) return throw_null(env, rc);
+  else return buffer_from_val(env, &data, true);
+}
+
+typedef enum LMDB_add_mode {
+  RETURN_BOOLEAN = 0,
+  RETURN_CURRENT,
+  RETURN_ZEROCOPY,
+} LMDB_add_mode;
+
+Value lmdb_add(const CallbackInfo& info) {
+  PUT_PREAMBLE();
+  MDB_val data = unwrap_val(info[3]);
+  auto mode = (LMDB_add_mode) info[0].As<Number>().Int32Value();
+  unsigned int flags = MDB_NOOVERWRITE;
+  int rc = mdb_put(txn, dbi, &key, &data, flags);
+  PUT_DEBUG_PRINT();
+  if (rc == MDB_KEYEXIST) {
+    // Return value based on mode
+    if (mode == RETURN_BOOLEAN) {
+      return Boolean::New(env, false);
+    }
+    else {
+      return buffer_from_val(
+        env,
+        &data,
+        mode == RETURN_ZEROCOPY ? true : false
+      );
+    }
+  }
+  else if (rc) return throw_null(env, rc);
+  else return Boolean::New(env, true);
+}
+
+Value lmdb_del(const CallbackInfo& info) {
   Env env = info.Env();
   MDB_txn *txn = unwrap_txn(info[0]);
   MDB_dbi dbi = unwrap_dbi(info[1]);
@@ -541,6 +580,9 @@ void lmdb_del(const CallbackInfo& info) {
   DEBUG_PRINT(("mdb_del(%p, %u, %p, %p): %d\n", txn, dbi, &key, &data, rc));
   DEBUG_PRINT(("- key : %p (%zu bytes)\n", key.mv_data, key.mv_size));
   DEBUG_PRINT(("- data: %p (%zu bytes)\n", data.mv_data, data.mv_size));
+  if (rc == MDB_KEYEXIST) return Boolean::New(env, false);
+  else if (rc) return throw_undefined(env, rc);
+  else return Boolean::New(env, true);
 }
 
 ////////////////////////////////////////////////
@@ -698,6 +740,27 @@ Value lmdb_dcmp(CallbackInfo& info) {
   return Number::New(env, (double)dcmp);
 }
 
+int msg_func(const char *msg, void *ctx) {
+  DEBUG_PRINT(("msg_func(%p, %p)\n", msg, ctx));
+  void **ctxp = (void**)ctx;
+  Env *env = reinterpret_cast<Env*>(ctxp[0]);
+  Array *array = reinterpret_cast<Array*>(ctxp[1]);
+  (*array)[array->Length()] = String::New(*env, msg).As<Value>();
+  return 0;
+}
+
+Value lmdb_reader_list(const CallbackInfo& info) {
+  Env env = info.Env();
+  MDB_env *dbenv = unwrap_env(info[0]);
+  Array array = Array::New(env);
+  void *ctxp[2];
+  ctxp[0] = &env;
+  ctxp[1] = &array;
+  int rc = mdb_reader_list(dbenv, &msg_func, ctxp);
+  DEBUG_PRINT(("mdb_reader_list(%p, %p, %p): %d\n", dbenv, &msg_func, &array, rc));
+  return array;
+}
+
 Value lmdb_reader_check(CallbackInfo& info) {
   Env env = info.Env();
   MDB_env *dbenv = unwrap_env(info[0]);
@@ -754,6 +817,7 @@ Object Init(Env env, Object exports) {
   exports.Set(String::New(env, "cursor_count"), Function::New(env, lmdb_cursor_count));
   exports.Set(String::New(env, "cmp"), Function::New(env, lmdb_cmp));
   exports.Set(String::New(env, "dcmp"), Function::New(env, lmdb_dcmp));
+  exports.Set(String::New(env, "reader_list"), Function::New(env, lmdb_reader_list));
   exports.Set(String::New(env, "reader_check"), Function::New(env, lmdb_reader_check));
   return exports;
 }

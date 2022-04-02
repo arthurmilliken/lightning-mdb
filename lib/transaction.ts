@@ -21,7 +21,7 @@ export class Transaction {
   get isReset(): boolean {
     return this._isReset;
   }
-  private assertOpen(): void {
+  assertOpen(): void {
     if (!this.isOpen) throw new Error("This transaction is already closed");
   }
   commit(): void {
