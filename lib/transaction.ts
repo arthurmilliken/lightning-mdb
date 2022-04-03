@@ -1,6 +1,7 @@
 import { lmdb } from "./binding";
 import { MDB_RDONLY } from "./constants";
-import { Database, DbOptions } from "./database";
+import { Database } from "./database";
+import { DbOptions } from "./types";
 
 export class Transaction {
   readonly txnp: bigint;

@@ -1,4 +1,5 @@
-import { Database, DbOptions } from "./database";
+import { Database } from "./database";
+import { DbOptions } from "./types";
 export declare class Transaction {
     readonly txnp: bigint;
     readonly envp: bigint;

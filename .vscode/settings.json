@@ -2,6 +2,8 @@
   "files.eol": "\n",
   "files.associations": {
     "*.ejs": "html",
-    "xutility": "cpp"
+    "xutility": "cpp",
+    "tuple": "cpp",
+    "utility": "cpp"
   }
 }

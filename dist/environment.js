@@ -57,10 +57,10 @@ class Environment {
             this.setMapSize(options.mapSize);
         }
         if (options?.maxReaders) {
-            binding_1.lmdb.set_maxreaders(this.envp, options.maxReaders);
+            binding_1.lmdb.env_set_maxreaders(this.envp, options.maxReaders);
         }
         if (options?.maxDBs) {
-            binding_1.lmdb.set_maxdbs(this.envp, options.maxDBs);
+            binding_1.lmdb.env_set_maxdbs(this.envp, options.maxDBs);
         }
         const flags = options ? calcEnvFlags(options) : 0;
         binding_1.lmdb.env_open(this.envp, path, flags, mode);
@@ -69,7 +69,7 @@ class Environment {
     copy(path, compact) {
         this.assertOpen();
         const flags = compact ? constants_1.MDB_CP_COMPACT : 0;
-        binding_1.lmdb.copy2(this.envp, path, flags);
+        binding_1.lmdb.env_copy2(this.envp, path, flags);
     }
     copyAsync(path, compact) {
         throw new Error("Method not implemented.");
@@ -77,7 +77,7 @@ class Environment {
     copyfd(fd, compact) {
         this.assertOpen();
         const flags = compact ? constants_1.MDB_CP_COMPACT : 0;
-        binding_1.lmdb.copyfd2(this.envp, fd, flags);
+        binding_1.lmdb.env_copyfd2(this.envp, fd, flags);
     }
     copyfdAsync(fd, compact) {
         throw new Error("Method not implemented.");
@@ -104,14 +104,14 @@ class Environment {
     setFlags(flags) {
         this.assertOpen();
         const flagsOn = calcEnvFlags(flags);
-        binding_1.lmdb.env_set_flags(this.envp, flagsOn, constants_1.SetFlags.ON);
+        binding_1.lmdb.env_set_flags(this.envp, flagsOn, false);
         const flagsOff = calcEnvFlags({
             noMetaSync: flags.noMetaSync === false,
             noSync: flags.noSync === false,
             mapAsync: flags.mapAsync === false,
             noMemInit: flags.noMemInit === false,
         });
-        binding_1.lmdb.env_set_flags(this.envp, flagsOff, constants_1.SetFlags.OFF);
+        binding_1.lmdb.env_set_flags(this.envp, flagsOff, true);
     }
     getOptions() {
         this.assertOpen();
@@ -140,16 +140,15 @@ class Environment {
         return binding_1.lmdb.env_get_fd(this.envp);
     }
     setMapSize(size) {
-        this.assertOpen();
         binding_1.lmdb.env_set_mapsize(this.envp, size);
     }
     getMaxReaders() {
         this.assertOpen();
-        return binding_1.lmdb.get_maxreaders(this.envp);
+        return binding_1.lmdb.env_get_maxreaders(this.envp);
     }
     getMaxKeySize() {
         this.assertOpen();
-        return binding_1.lmdb.get_max_keysize(this.envp);
+        return binding_1.lmdb.env_get_maxkeysize(this.envp);
     }
     beginTxn(readOnly = false) {
         this.assertOpen();

@@ -2,8 +2,16 @@ import { lmdb } from "./binding";
 import { EnvFlag, MDB_CP_COMPACT, SetFlags } from "./constants";
 import { dirname, resolve } from "path";
 import { Transaction } from "./transaction";
-import { Database, DbOptions, DbStat } from "./database";
-import { Key } from "./types";
+import { Database } from "./database";
+import {
+  DbOptions,
+  DbStat,
+  EnvFlags,
+  EnvInfo,
+  EnvOptions,
+  Key,
+  Version,
+} from "./types";
 const { isMainThread } = require("worker_threads");
 const { mkdir, stat } = require("fs/promises");
 
@@ -58,10 +66,10 @@ export class Environment {
       this.setMapSize(options.mapSize);
     }
     if (options?.maxReaders) {
-      lmdb.set_maxreaders(this.envp, options.maxReaders);
+      lmdb.env_set_maxreaders(this.envp, options.maxReaders);
     }
     if (options?.maxDBs) {
-      lmdb.set_maxdbs(this.envp, options.maxDBs);
+      lmdb.env_set_maxdbs(this.envp, options.maxDBs);
     }
     const flags = options ? calcEnvFlags(options) : 0;
     lmdb.env_open(this.envp, path, flags, mode);
@@ -70,7 +78,7 @@ export class Environment {
   copy(path: string, compact?: boolean): void {
     this.assertOpen();
     const flags = compact ? MDB_CP_COMPACT : 0;
-    lmdb.copy2(this.envp, path, flags);
+    lmdb.env_copy2(this.envp, path, flags);
   }
   copyAsync(path: string, compact?: boolean): Promise<void> {
     throw new Error("Method not implemented.");
@@ -78,7 +86,7 @@ export class Environment {
   copyfd(fd: number, compact?: boolean): void {
     this.assertOpen();
     const flags = compact ? MDB_CP_COMPACT : 0;
-    lmdb.copyfd2(this.envp, fd, flags);
+    lmdb.env_copyfd2(this.envp, fd, flags);
   }
   copyfdAsync(fd: number, compact?: boolean): Promise<void> {
     throw new Error("Method not implemented.");
@@ -105,14 +113,14 @@ export class Environment {
   setFlags(flags: EnvFlags): void {
     this.assertOpen();
     const flagsOn = calcEnvFlags(flags);
-    lmdb.env_set_flags(this.envp, flagsOn, SetFlags.ON);
+    lmdb.env_set_flags(this.envp, flagsOn, false);
     const flagsOff = calcEnvFlags({
       noMetaSync: flags.noMetaSync === false,
       noSync: flags.noSync === false,
       mapAsync: flags.mapAsync === false,
       noMemInit: flags.noMemInit === false,
     });
-    lmdb.env_set_flags(this.envp, flagsOff, SetFlags.OFF);
+    lmdb.env_set_flags(this.envp, flagsOff, true);
   }
   getOptions(): EnvOptions {
     this.assertOpen();
@@ -141,16 +149,15 @@ export class Environment {
     return lmdb.env_get_fd(this.envp);
   }
   setMapSize(size: number): void {
-    this.assertOpen();
     lmdb.env_set_mapsize(this.envp, size);
   }
   getMaxReaders(): number {
     this.assertOpen();
-    return lmdb.get_maxreaders(this.envp);
+    return lmdb.env_get_maxreaders(this.envp);
   }
   getMaxKeySize(): number {
     this.assertOpen();
-    return lmdb.get_max_keysize(this.envp);
+    return lmdb.env_get_maxkeysize(this.envp);
   }
   beginTxn(readOnly = false): Transaction {
     this.assertOpen();
@@ -185,56 +192,6 @@ export function version(): Version {
 
 export function strerror(code: number): string {
   return lmdb.strerror(code);
-}
-
-export interface Version {
-  version: string;
-  major: number;
-  minor: number;
-  patch: number;
-}
-
-export interface EnvInfo {
-  mapAddr: bigint /** Address of map, if fixed (experimental) */;
-  mapSize: number /** Size of the data memory map */;
-  lastPage: number /** ID of the last used page */;
-  lastTxn: number /** ID of the last committed transaction */;
-  maxReaders: number /** max reader slots in the environment */;
-  numReaders: number /** max reader slots used in the environment */;
-}
-
-export interface EnvOptions extends EnvFlags {
-  /** mmap at a fixed address (experimental). @see lmdb.h for details */
-  fixedMap?: boolean;
-  /** treat `name` as a filename rather than a directory. @see lmdb.h for details */
-  noSubdir?: boolean;
-  /** read only. @see lmdb.h for details */
-  readOnly?: boolean;
-  /** use writable mmap. @see lmdb.h for details */
-  writeMap?: boolean;
-  /** tie reader locktable slots to #MDB_txn objects instead of to threads. @see lmdb.h for details */
-  noTLS?: boolean;
-  /** don't do any locking, caller must manage their own locks. @see lmdb.h for details */
-  noLock?: boolean;
-  /** don't do readahead (no effect on Windows). @see lmdb.h for details */
-  noReadAhead?: boolean;
-  /** size (in bytes) of memory map. @see lmdb.h for details */
-  mapSize?: number;
-  /** max number of readers. @see lmdb.h for details */
-  maxReaders?: number;
-  /** max number of dbs. @see lmdb.h for details */
-  maxDBs?: number;
-}
-
-export interface EnvFlags {
-  /** don't fsync metapage after commit. @see lmdb.h for details */
-  noMetaSync?: boolean;
-  /** don't fsync after commit. @see lmdb.h for details */
-  noSync?: boolean;
-  /** use asynchronous msync when #MDB_WRITEMAP is used. @see lmdb.h for details */
-  mapAsync?: boolean;
-  /** don't initialize malloc'd memory before writing to datafile. @see lmdb.h for details */
-  noMemInit?: boolean;
 }
 
 function calcEnvFlags(flags: EnvOptions | EnvFlags) {

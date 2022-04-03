@@ -1,40 +1,37 @@
 /// <reference types="node" />
 import { Transaction } from "./transaction";
-import { CursorOptions, CursorPutFlags, ICursor, ICursorItem, Key } from "./types";
-export declare class CursorItem<K extends Key = string> implements ICursorItem<K> {
-    _cursor: Cursor<K>;
-    get cursor(): Cursor<K>;
-    constructor(cursor: Cursor<K>);
-    key(): K | null;
-    value(): Buffer | null;
-    valueString(): string | null;
-    valueNumber(): number | null;
-    valueBoolean(): boolean | null;
-    detach(): void;
-}
-export declare class Cursor<K extends Key = string> implements ICursor<K> {
-    cursorp: bigint;
-    txnp: bigint;
-    options: CursorOptions<K>;
-    dbi: number;
-    constructor(txnp: bigint, dbi: number, options: CursorOptions<K>);
-    key(): K | null;
-    value(): Buffer | null;
-    valueString(): string | null;
-    valueNumber(): number | null;
-    valueBoolean(): boolean | null;
-    detach(): void;
+import { DbItem, Key, KeyType, Value } from "./types";
+export declare class Cursor<K extends Key = string> implements Cursor<K> {
+    private _cursorp;
+    get cursorp(): bigint;
+    private _txnp;
+    get txnp(): bigint;
+    private _dbi;
+    get dbi(): number;
+    private _isOpen;
+    get isOpen(): boolean;
+    private _keyType;
+    get keyType(): KeyType;
+    constructor(txnp: bigint, dbi: number, keyType: KeyType);
+    put(key: K, value: Value): void;
+    del(): void;
+    protected decodeKey(keyBuf: Buffer): K;
+    key(): K;
+    value(zeroCopy?: boolean): Buffer;
+    asString(): string;
+    asNumber(): number;
+    asBoolean(): boolean;
+    item(zeroCopy?: boolean): DbItem<K, Buffer>;
+    stringItem(): DbItem<K, string>;
+    numberItem(): DbItem<K, number>;
+    booleanItem(): DbItem<K, boolean>;
+    first(): boolean;
+    prev(skip?: number): boolean;
+    next(skip?: number): boolean;
+    last(): boolean;
+    find(key: Buffer): boolean;
+    findNext(key: Buffer): boolean;
+    protected assertOpen(): void;
     close(): void;
     renew(txn: Transaction): void;
-    put(key: Buffer, value: Buffer, flags: CursorPutFlags): void;
-    del(noDupData?: boolean): void;
-    first(): ICursorItem<K> | null;
-    current(): ICursorItem<K> | null;
-    last(): ICursorItem<K> | null;
-    next(steps?: number): ICursorItem<K> | null;
-    prev(steps?: number): ICursorItem<K> | null;
-    find(key: K): ICursorItem<K> | null;
-    findEntry(key: K): ICursorItem<K> | null;
-    findNext(key: K): ICursorItem<K> | null;
-    iterator(): Generator<ICursorItem<K>, void, K>;
 }

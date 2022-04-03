@@ -19,7 +19,7 @@ class Database {
             const _flags = options ? calcDbFlags(options) : 0;
             if (!txn)
                 throw new Error("Transaction is required");
-            this._dbi = binding_1.lmdb.dbi_open(txn?.txnp, name, _flags);
+            this._dbi = binding_1.lmdb.dbi_open(txn.txnp, name, _flags);
             this._envp = envp;
             this._keyType = options?.keyType || "string";
         }
@@ -100,10 +100,15 @@ class Database {
      *        run in other threads. Use with caution.
      * @returns Buffer of data item, or null if key not found
      */
-    get(key, txn, zeroCopy) {
+    get(key, txn, zeroCopy = false) {
         this.assertOpen();
         return this.useTransaction((useTxn) => {
-            return binding_1.lmdb.get(useTxn.txnp, this._dbi, this.encodeKey(key), zeroCopy);
+            return binding_1.lmdb.get({
+                txnp: useTxn.txnp,
+                dbi: this._dbi,
+                key: this.encodeKey(key),
+                zeroCopy,
+            });
         }, txn);
     }
     /**
@@ -113,15 +118,11 @@ class Database {
      * @returns null if not found
      */
     getString(key, txn) {
-        // v8 crashes if two Buffers are created which point to the same memory
-        const zeroCopy = worker_threads_1.isMainThread ? true : false;
         return this.useTransaction((useTxn) => {
-            const buf = this.get(key, useTxn, zeroCopy);
+            const buf = this.get(key, useTxn);
             if (!buf)
                 return null;
             const str = buf.toString();
-            if (buf)
-                detachBuffer(buf);
             return str;
         }, txn);
     }
@@ -132,10 +133,8 @@ class Database {
      * @returns null if not found
      */
     getNumber(key, txn) {
-        // v8 crashes if two Buffers are created which point to the same memory
-        const zeroCopy = worker_threads_1.isMainThread ? true : false;
         return this.useTransaction((useTxn) => {
-            const buf = this.get(key, useTxn, zeroCopy);
+            const buf = this.get(key, useTxn);
             if (!buf)
                 return null;
             const num = buf.readDoubleBE();
@@ -150,10 +149,8 @@ class Database {
      * @returns null if not found
      */
     getBoolean(key, txn) {
-        // v8 crashes if two Buffers are created which point to the same memory
-        const zeroCopy = worker_threads_1.isMainThread ? true : false;
         return this.useTransaction((useTxn) => {
-            const buf = this.get(key, useTxn, zeroCopy);
+            const buf = this.get(key, useTxn);
             if (!buf)
                 return null;
             const bool = buf.readUInt8() ? true : false;
@@ -172,7 +169,13 @@ class Database {
         txn.assertOpen();
         const keyBuf = this.encodeKey(key);
         const valueBuf = this.encodeValue(value);
-        binding_1.lmdb.put(txn.txnp, this._dbi, keyBuf, valueBuf, flags?.append ? constants_1.PutFlag.APPEND : 0);
+        binding_1.lmdb.put({
+            txnp: txn.txnp,
+            dbi: this._dbi,
+            key: keyBuf,
+            value: valueBuf,
+            flags: flags?.append ? constants_1.PutFlag.APPEND : 0,
+        });
     }
     putAsync(key, value) {
         throw new Error("Method not implemented.");
@@ -197,7 +200,13 @@ class Database {
         txn.assertOpen();
         const keyBuf = this.encodeKey(key);
         const valueBuf = this.encodeValue(value);
-        return binding_1.lmdb.add(txn.txnp, this._dbi, keyBuf, valueBuf, mode);
+        return binding_1.lmdb.add({
+            txnp: txn.txnp,
+            dbi: this._dbi,
+            key: keyBuf,
+            value: valueBuf,
+            mode,
+        });
     }
     addAsync(key, value, mode) {
         throw new Error("Method not implementd.");
@@ -216,9 +225,15 @@ class Database {
         this.assertOpen();
         txn.assertOpen();
         const keyBuf = this.encodeKey(key);
-        const flagVal = (flags?.append ? constants_1.PutFlag.APPEND : 0) +
+        const _flags = (flags?.append ? constants_1.PutFlag.APPEND : 0) +
             (flags?.noOverwrite ? constants_1.PutFlag.NOOVERWRITE : 0);
-        return binding_1.lmdb.put(txn.txnp, this._dbi, keyBuf, size, flagVal);
+        return binding_1.lmdb.reserve({
+            txnp: txn.txnp,
+            dbi: this._dbi,
+            key: keyBuf,
+            size,
+            flags: _flags,
+        });
     }
     /**
      * Removes key/data pair from the database.
@@ -232,10 +247,6 @@ class Database {
         return binding_1.lmdb.del(txn.txnp, this._dbi, keyBuf);
     }
     delAsync(key) {
-        throw new Error("Method not implemented.");
-    }
-    cursor(options, txn) {
-        this.assertOpen();
         throw new Error("Method not implemented.");
     }
     /** Return a comparison as if the two items were keys in this database.
@@ -286,7 +297,7 @@ class Database {
         if (typeof key === "number") {
             assertU64(key);
             const buf = buffer_1.Buffer.allocUnsafe(8);
-            buf.writeBigInt64BE(BigInt(key));
+            buf.writeBigUInt64BE(BigInt(key));
             return buf;
         }
         throw new TypeError(`Invalid key: ${key}`);
@@ -338,12 +349,9 @@ function bufReadBoolean(buf, offset = 0) {
 exports.bufReadBoolean = bufReadBoolean;
 async function main() {
     const env = await environment_1.openEnv(".testdb");
-    console.log("after openEnv()");
     const db = env.openDB(null);
-    console.log("after env.openDB()");
     const txn = env.beginTxn();
     db.clear(txn);
-    console.log("after env.beginTxn()");
     db.put("a", "apple seeds", txn);
     db.put("b", "banana peels", txn);
     db.put("c", "cherry pits", txn);

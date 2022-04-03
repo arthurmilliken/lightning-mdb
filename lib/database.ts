@@ -1,29 +1,11 @@
 import { lmdb } from "./binding";
 import { AddMode, DbFlag, PutFlag } from "./constants";
 import { Transaction } from "./transaction";
-import { ICursor, CursorOptions, Key, KeyType, Value, PutFlags } from "./types";
+import { Key, KeyType, Value, PutFlags, DbOptions, DbStat } from "./types";
 import { Buffer } from "buffer";
 import { isMainThread } from "worker_threads";
 import { openEnv } from "./environment";
-
-export interface DbOptions {
-  /** create DB if not already existing */
-  create?: boolean;
-  /** use reverse string keys (compare final byte first) */
-  reverseKey?: boolean;
-  /** database keys must be of this type (default: "string") */
-  keyType?: KeyType;
-}
-
-export interface DbStat {
-  pageSize: number /** Size of a database page.
-  This is currently the same for all databases. */;
-  depth: number /** Depth (height) of the B-tree */;
-  branchPages: number /** Number of internal (non-leaf) pages */;
-  leafPages: number /** Number of leaf pages */;
-  overflowPages: number /** Number of overflow pages */;
-  entries: number /** Number of data items */;
-}
+import { Cursor } from "./cursor";
 
 export class Database<K extends Key = string> {
   /**
@@ -74,7 +56,7 @@ export class Database<K extends Key = string> {
       name = name || null; // coalesce undefined
       const _flags = options ? calcDbFlags(options) : 0;
       if (!txn) throw new Error("Transaction is required");
-      this._dbi = lmdb.dbi_open(txn?.txnp, name, _flags);
+      this._dbi = lmdb.dbi_open(txn.txnp, name, _flags);
       this._envp = envp;
       this._keyType = options?.keyType || "string";
     } else {
@@ -154,10 +136,15 @@ export class Database<K extends Key = string> {
    *        run in other threads. Use with caution.
    * @returns Buffer of data item, or null if key not found
    */
-  get(key: K, txn?: Transaction, zeroCopy?: boolean): Buffer | null {
+  get(key: K, txn?: Transaction, zeroCopy = false): Buffer | null {
     this.assertOpen();
     return this.useTransaction((useTxn) => {
-      return lmdb.get(useTxn.txnp, this._dbi, this.encodeKey(key), zeroCopy);
+      return lmdb.get({
+        txnp: useTxn.txnp,
+        dbi: this._dbi,
+        key: this.encodeKey(key),
+        zeroCopy,
+      });
     }, txn);
   }
 
@@ -168,13 +155,10 @@ export class Database<K extends Key = string> {
    * @returns null if not found
    */
   getString(key: K, txn?: Transaction): string | null {
-    // v8 crashes if two Buffers are created which point to the same memory
-    const zeroCopy = isMainThread ? true : false;
     return this.useTransaction((useTxn) => {
-      const buf = this.get(key, useTxn, zeroCopy);
+      const buf = this.get(key, useTxn);
       if (!buf) return null;
       const str = buf.toString();
-      if (buf) detachBuffer(buf);
       return str;
     }, txn);
   }
@@ -186,10 +170,8 @@ export class Database<K extends Key = string> {
    * @returns null if not found
    */
   getNumber(key: K, txn?: Transaction): number | null {
-    // v8 crashes if two Buffers are created which point to the same memory
-    const zeroCopy = isMainThread ? true : false;
     return this.useTransaction((useTxn) => {
-      const buf = this.get(key, useTxn, zeroCopy);
+      const buf = this.get(key, useTxn);
       if (!buf) return null;
       const num = buf.readDoubleBE();
       detachBuffer(buf);
@@ -204,10 +186,8 @@ export class Database<K extends Key = string> {
    * @returns null if not found
    */
   getBoolean(key: K, txn?: Transaction): boolean | null {
-    // v8 crashes if two Buffers are created which point to the same memory
-    const zeroCopy = isMainThread ? true : false;
     return this.useTransaction((useTxn) => {
-      const buf = this.get(key, useTxn, zeroCopy);
+      const buf = this.get(key, useTxn);
       if (!buf) return null;
       const bool = buf.readUInt8() ? true : false;
       detachBuffer(buf);
@@ -226,13 +206,13 @@ export class Database<K extends Key = string> {
     txn.assertOpen();
     const keyBuf = this.encodeKey(key);
     const valueBuf = this.encodeValue(value);
-    lmdb.put(
-      txn.txnp,
-      this._dbi,
-      keyBuf,
-      valueBuf,
-      flags?.append ? PutFlag.APPEND : 0
-    );
+    lmdb.put({
+      txnp: txn.txnp,
+      dbi: this._dbi,
+      key: keyBuf,
+      value: valueBuf,
+      flags: flags?.append ? PutFlag.APPEND : 0,
+    });
   }
 
   putAsync(key: K, value: Value): Promise<Buffer | null> {
@@ -264,7 +244,13 @@ export class Database<K extends Key = string> {
     txn.assertOpen();
     const keyBuf = this.encodeKey(key);
     const valueBuf = this.encodeValue(value);
-    return lmdb.add(txn.txnp, this._dbi, keyBuf, valueBuf, mode);
+    return lmdb.add({
+      txnp: txn.txnp,
+      dbi: this._dbi,
+      key: keyBuf,
+      value: valueBuf,
+      mode,
+    });
   }
 
   addAsync(
@@ -294,10 +280,16 @@ export class Database<K extends Key = string> {
     this.assertOpen();
     txn.assertOpen();
     const keyBuf = this.encodeKey(key);
-    const flagVal =
+    const _flags =
       (flags?.append ? PutFlag.APPEND : 0) +
       (flags?.noOverwrite ? PutFlag.NOOVERWRITE : 0);
-    return lmdb.put(txn.txnp, this._dbi, keyBuf, size, flagVal);
+    return lmdb.reserve({
+      txnp: txn.txnp,
+      dbi: this._dbi,
+      key: keyBuf,
+      size,
+      flags: _flags,
+    });
   }
 
   /**
@@ -313,11 +305,6 @@ export class Database<K extends Key = string> {
   }
 
   delAsync(key: K): Promise<void> {
-    throw new Error("Method not implemented.");
-  }
-
-  cursor(options: CursorOptions<K>, txn?: Transaction): ICursor<K> {
-    this.assertOpen();
     throw new Error("Method not implemented.");
   }
 
@@ -368,7 +355,7 @@ export class Database<K extends Key = string> {
     if (typeof key === "number") {
       assertU64(key);
       const buf = Buffer.allocUnsafe(8);
-      buf.writeBigInt64BE(BigInt(key));
+      buf.writeBigUInt64BE(BigInt(key));
       return buf;
     }
     throw new TypeError(`Invalid key: ${key}`);

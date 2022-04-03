@@ -1,25 +1,8 @@
 /// <reference types="node" />
 import { AddMode } from "./constants";
 import { Transaction } from "./transaction";
-import { ICursor, CursorOptions, Key, KeyType, Value, PutFlags } from "./types";
+import { Key, KeyType, Value, PutFlags, DbOptions, DbStat } from "./types";
 import { Buffer } from "buffer";
-export interface DbOptions {
-    /** create DB if not already existing */
-    create?: boolean;
-    /** use reverse string keys (compare final byte first) */
-    reverseKey?: boolean;
-    /** database keys must be of this type (default: "string") */
-    keyType?: KeyType;
-}
-export interface DbStat {
-    pageSize: number /** Size of a database page.
-    This is currently the same for all databases. */;
-    depth: number /** Depth (height) of the B-tree */;
-    branchPages: number /** Number of internal (non-leaf) pages */;
-    leafPages: number /** Number of leaf pages */;
-    overflowPages: number /** Number of overflow pages */;
-    entries: number /** Number of data items */;
-}
 export declare class Database<K extends Key = string> {
     /**
      * Use this method to create a Database for use in a Worker Thread
@@ -136,7 +119,6 @@ export declare class Database<K extends Key = string> {
      */
     del(key: K, txn: Transaction): boolean;
     delAsync(key: K): Promise<void>;
-    cursor(options: CursorOptions<K>, txn?: Transaction): ICursor<K>;
     /** Return a comparison as if the two items were keys in this database.
      * @param a the first item to compare
      * @param b the second item to compare

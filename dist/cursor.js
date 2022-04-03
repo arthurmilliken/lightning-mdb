@@ -1,97 +1,202 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Cursor = exports.CursorItem = void 0;
+exports.Cursor = void 0;
+const binding_1 = require("./binding");
+const constants_1 = require("./constants");
 const environment_1 = require("./environment");
-class CursorItem {
-    constructor(cursor) {
-        this._cursor = cursor;
-    }
-    get cursor() {
-        return this._cursor;
-    }
-    key() {
-        throw new Error("Method not implemented.");
-    }
-    value() {
-        throw new Error("Method not implemented.");
-    }
-    valueString() {
-        throw new Error("Method not implemented.");
-    }
-    valueNumber() {
-        throw new Error("Method not implemented.");
-    }
-    valueBoolean() {
-        throw new Error("Method not implemented.");
-    }
-    detach() {
-        throw new Error("Method not implemented.");
-    }
-}
-exports.CursorItem = CursorItem;
+const notFound = "Item not found";
 class Cursor {
-    constructor(txnp, dbi, options) {
-        this.cursorp = 0n;
-        this.txnp = txnp;
-        this.dbi = dbi;
-        this.options = Object.assign({ keyType: "string" }, options);
+    constructor(txnp, dbi, keyType) {
+        this._cursorp = binding_1.lmdb.cursor_open(txnp, dbi);
+        this._txnp = txnp;
+        this._dbi = dbi;
+        this._keyType = keyType;
+        this._isOpen = true;
+    }
+    get cursorp() {
+        return this._cursorp;
+    }
+    get txnp() {
+        return this._txnp;
+    }
+    get dbi() {
+        return this._dbi;
+    }
+    get isOpen() {
+        return this._isOpen;
+    }
+    get keyType() {
+        return this._keyType;
+    }
+    put(key, value) {
+        throw new Error("Method not implemented.");
+    }
+    del() {
+        throw new Error("Method not implemented.");
+    }
+    decodeKey(keyBuf) {
+        if (this.keyType === "Buffer")
+            return keyBuf;
+        if (this.keyType === "string")
+            return keyBuf.toString();
+        if (this.keyType === "number")
+            return Number(keyBuf.readBigUInt64BE());
+        throw new Error(`Unknown keyType: ${this.keyType}`);
     }
     key() {
-        throw new Error("Method not implemented.");
+        this.assertOpen();
+        const result = binding_1.lmdb.cursor_get({
+            cursorp: this._cursorp,
+            op: constants_1.CursorOp.GET_CURRENT,
+            returnKey: true,
+        });
+        if (!result || !result.key)
+            throw new Error(notFound);
+        return this.decodeKey(result.key);
     }
-    value() {
-        throw new Error("Method not implemented.");
+    value(zeroCopy = false) {
+        this.assertOpen();
+        const result = binding_1.lmdb.cursor_get({
+            cursorp: this.cursorp,
+            op: constants_1.CursorOp.GET_CURRENT,
+            returnValue: true,
+            zeroCopy,
+        });
+        if (!result?.value)
+            throw new Error(notFound);
+        return result.value;
     }
-    valueString() {
-        throw new Error("Method not implemented.");
+    asString() {
+        return this.value().toString();
     }
-    valueNumber() {
-        throw new Error("Method not implemented.");
+    asNumber() {
+        return this.value().readDoubleBE();
     }
-    valueBoolean() {
-        throw new Error("Method not implemented.");
+    asBoolean() {
+        return this.value().readUInt8() ? true : false;
     }
-    detach() {
-        throw new Error("Method not implemented.");
+    item(zeroCopy = false) {
+        this.assertOpen();
+        const result = binding_1.lmdb.cursor_get({
+            cursorp: this.cursorp,
+            op: constants_1.CursorOp.GET_CURRENT,
+            returnKey: true,
+            returnValue: true,
+            zeroCopy,
+        });
+        if (!result)
+            throw new Error(notFound);
+        return {
+            key: result.key ? this.decodeKey(result.key) : undefined,
+            value: result.value || undefined,
+        };
     }
-    close() {
-        throw new Error("Method not implemented.");
+    stringItem() {
+        const item = this.item();
+        return {
+            key: item.key,
+            value: item.value?.toString(),
+        };
     }
-    renew(txn) {
-        throw new Error("Method not implemented.");
+    numberItem() {
+        const item = this.item();
+        return {
+            key: item.key,
+            value: item.value?.readDoubleBE(),
+        };
     }
-    put(key, value, flags) {
-        throw new Error("Method not implemented.");
-    }
-    del(noDupData) {
-        throw new Error("Method not implemented.");
+    booleanItem() {
+        const item = this.item();
+        return {
+            key: item.key,
+            value: item.value?.readUInt8() ? true : false,
+        };
     }
     first() {
-        throw new Error("Method not implemented.");
+        this.assertOpen();
+        const result = binding_1.lmdb.cursor_get({
+            cursorp: this.cursorp,
+            op: constants_1.CursorOp.FIRST,
+        });
+        if (!result)
+            return false;
+        else
+            return true;
     }
-    current() {
-        throw new Error("Method not implemented.");
+    prev(skip = 0) {
+        this.assertOpen();
+        while (skip-- >= 0) {
+            const result = binding_1.lmdb.cursor_get({
+                cursorp: this.cursorp,
+                op: constants_1.CursorOp.PREV,
+            });
+            if (!result)
+                return false;
+        }
+        return true;
+    }
+    next(skip = 0) {
+        this.assertOpen();
+        while (skip-- >= 0) {
+            const result = binding_1.lmdb.cursor_get({
+                cursorp: this.cursorp,
+                op: constants_1.CursorOp.NEXT,
+            });
+            if (!result)
+                return false;
+        }
+        return true;
     }
     last() {
-        throw new Error("Method not implemented.");
-    }
-    next(steps) {
-        throw new Error("Method not implemented.");
-    }
-    prev(steps) {
-        throw new Error("Method not implemented.");
+        this.assertOpen();
+        const result = binding_1.lmdb.cursor_get({
+            cursorp: this.cursorp,
+            op: constants_1.CursorOp.LAST,
+        });
+        if (!result)
+            return false;
+        else
+            return true;
     }
     find(key) {
-        throw new Error("Method not implemented.");
-    }
-    findEntry(key) {
-        throw new Error("Method not implemented.");
+        this.assertOpen();
+        const result = binding_1.lmdb.cursor_get({
+            cursorp: this.cursorp,
+            op: constants_1.CursorOp.SET_KEY,
+            key,
+        });
+        if (!result)
+            return false;
+        else
+            return true;
     }
     findNext(key) {
-        throw new Error("Method not implemented.");
+        this.assertOpen();
+        const result = binding_1.lmdb.cursor_get({
+            cursorp: this.cursorp,
+            op: constants_1.CursorOp.SET_RANGE,
+            key,
+        });
+        if (!result)
+            return false;
+        else
+            return true;
     }
-    iterator() {
-        throw new Error("Method not implemented.");
+    assertOpen() {
+        if (!this.isOpen)
+            throw new Error("Cursor is already closed");
+    }
+    close() {
+        this.assertOpen();
+        binding_1.lmdb.cursor_close(this.cursorp);
+        this._isOpen = false;
+    }
+    renew(txn) {
+        if (this.isOpen) {
+            this.close();
+        }
+        binding_1.lmdb.cursor_renew(txn.txnp, this.cursorp);
+        this._isOpen = true;
     }
 }
 exports.Cursor = Cursor;
