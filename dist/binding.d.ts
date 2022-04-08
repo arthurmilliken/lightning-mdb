@@ -1,5 +1,5 @@
 /// <reference types="node" />
-import { AddMode, CursorOp } from "./constants";
+import { CursorOp } from "./constants";
 import { DbItem, DbStat, EnvInfo, Version } from "./types";
 interface LMDB {
     version(): Version;
@@ -38,7 +38,7 @@ interface LMDB {
         dbi: number;
         key: Buffer;
         zeroCopy?: boolean;
-    }): Buffer | null;
+    }): Buffer;
     put(params: {
         txnp: bigint;
         dbi: number;
@@ -46,21 +46,14 @@ interface LMDB {
         value: Buffer;
         flags: number;
     }): void;
-    add(params: {
-        txnp: bigint;
-        dbi: number;
-        key: Buffer;
-        value: Buffer;
-        mode: AddMode;
-    }): boolean | Buffer;
     reserve(params: {
         txnp: bigint;
         dbi: number;
         key: Buffer;
         size: number;
         flags: number;
-    }): Buffer | false;
-    del(txnp: bigint, dbi: number, key: Buffer): boolean;
+    }): Buffer;
+    del(txnp: bigint, dbi: number, key: Buffer): void;
     cmp(txnp: bigint, dbi: number, a: Buffer, b: Buffer): number;
     detach_buffer(buf: Buffer): void;
     cursor_open(tnxp: bigint, dbi: number): bigint;
@@ -71,12 +64,23 @@ interface LMDB {
         op: CursorOp;
         key?: Buffer;
         value?: Buffer;
-        returnKey?: boolean;
-        returnValue?: boolean;
+        includeKey?: boolean;
+        includeValue?: boolean;
         zeroCopy?: boolean;
     }): DbItem<Buffer, Buffer> | null;
-    cursor_put(cursorp: bigint, key: Buffer, value: Buffer, flags: number): void;
-    cursor_add(): boolean | Buffer;
+    cursor_put(params: {
+        cursorp: bigint;
+        key: Buffer;
+        value: Buffer;
+        flags?: number;
+    }): void;
+    cursor_reserve(params: {
+        cursor: bigint;
+        key: Buffer;
+        value: Buffer;
+        flags?: number;
+    }): Buffer;
+    cursor_del(cursorp: bigint, flags?: number): void;
 }
 declare const lmdb: LMDB;
 export { lmdb };

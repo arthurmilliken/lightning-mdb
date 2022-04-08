@@ -87,7 +87,8 @@ export interface Query<K extends Key = string> {
   start?: K;
   end?: K;
   reverse?: boolean;
-  limit?: boolean;
+  limit?: number;
+  offset?: number;
 }
 
 export interface IEntry<K extends Key = string> {
@@ -106,6 +107,10 @@ export interface PutFlags {
    * be in the correct order. Loading unsorted keys with this flag will
    * throw an error. */
   append?: boolean;
+  /** enter the new key/data pair only if the key does not already appear
+   * in the database. The function will throw if the key already appears
+   * in the database */
+  noOverwrite?: boolean;
 }
 
 export interface CursorPutFlags extends PutFlags {

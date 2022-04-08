@@ -1,5 +1,5 @@
 import { lmdb } from "./binding";
-import { EnvFlag, MDB_CP_COMPACT, SetFlags } from "./constants";
+import { EnvFlag, MDB_CP_COMPACT } from "./constants";
 import { dirname, resolve } from "path";
 import { Transaction } from "./transaction";
 import { Database } from "./database";
@@ -13,7 +13,7 @@ import {
   Version,
 } from "./types";
 const { isMainThread } = require("worker_threads");
-const { mkdir, stat } = require("fs/promises");
+const { mkdir } = require("fs/promises");
 
 export class Environment {
   /**
@@ -80,7 +80,7 @@ export class Environment {
     const flags = compact ? MDB_CP_COMPACT : 0;
     lmdb.env_copy2(this.envp, path, flags);
   }
-  copyAsync(path: string, compact?: boolean): Promise<void> {
+  copyAsync(): Promise<void> {
     throw new Error("Method not implemented.");
   }
   copyfd(fd: number, compact?: boolean): void {
@@ -88,7 +88,7 @@ export class Environment {
     const flags = compact ? MDB_CP_COMPACT : 0;
     lmdb.env_copyfd2(this.envp, fd, flags);
   }
-  copyfdAsync(fd: number, compact?: boolean): Promise<void> {
+  copyfdAsync(): Promise<void> {
     throw new Error("Method not implemented.");
   }
   stat(): DbStat {

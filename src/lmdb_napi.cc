@@ -3,7 +3,7 @@
 
 using namespace Napi;
 
-#define DEBUG 1
+#define DEBUG 0
 #if DEBUG
 #define DEBUG_PRINT(x) printf x
 #else
@@ -79,8 +79,8 @@ static inline Buffer<uint8_t> buffer_from_val(
   MDB_val *val,
   bool zerocopy
 ) {
+  DEBUG_PRINT(("buffer_from_val(%p, %d): %zu bytes\n", val->mv_data, zerocopy, val->mv_size));
   if (zerocopy) {
-    DEBUG_PRINT(("buffer_from_val: zerocopy %p (%zu bytes)\n", val->mv_data, val->mv_size));
     return Buffer<uint8_t>::New(
       env,
       (uint8_t *)val->mv_data,
@@ -457,7 +457,7 @@ void lmdb_mdb_drop(const CallbackInfo& info) {
  *                dbi: number;
  *                key: Buffer;
  *                zeroCopy?: boolean; }]
- * @return Value - null if key is not found
+ * @return Value
  */
 Value lmdb_get(const CallbackInfo& info) {
   Env env = info.Env();
@@ -470,8 +470,7 @@ Value lmdb_get(const CallbackInfo& info) {
   DEBUG_PRINT(("mdb_get(%p, %u, %p, %p): %d\n", txn, dbi, &key, &data, rc));
   DEBUG_PRINT(("- key : %p (%zu bytes)\n", key.mv_data, key.mv_size));
   DEBUG_PRINT(("- data: %p (%zu bytes)\n", data.mv_data, data.mv_size));
-  if (rc == MDB_NOTFOUND) return env.Null();
-  else if (rc) return throw_undefined(env, rc);
+  if (rc) return throw_undefined(env, rc);
   bool zeroCopy = params.Get("zeroCopy").IsBoolean()
     ? params.Get("zeroCopy").As<Boolean>()
     : false;
@@ -499,13 +498,6 @@ Value lmdb_get(const CallbackInfo& info) {
   DEBUG_PRINT(("- key : %p (%zu bytes)\n", key.mv_data, key.mv_size)); \
   DEBUG_PRINT(("- data: %p (%zu bytes)\n", data.mv_data, data.mv_size))
 
-#define CHECK_APPEND_WITH_ERROR_TYPE(...) \
-  if (flags & MDB_APPEND || flags & MDB_APPENDDUP) { \
-    const char *msg = "Keys and data must be appended in sorted order"; \
-    Error::New(env, msg).ThrowAsJavaScriptException(); \
-    return __VA_ARGS__; \
-  }
-
 /**
  * @brief Put data into DB at specified key
  * 
@@ -521,55 +513,7 @@ void lmdb_put(const CallbackInfo& info) {
   unsigned int flags = params.Get("flags").As<Number>().Uint32Value();
   int rc = mdb_put(txn, dbi, &key, &data, flags);
   DEBUG_PRINT_PUT();
-  if (rc == MDB_KEYEXIST) {
-    CHECK_APPEND_WITH_ERROR_TYPE();
-    return;
-  }
-  else if (rc) return throw_void(env, rc);
-  else return;
-}
-
-typedef enum LMDB_add_mode {
-  RETURN_BOOLEAN = 0,
-  RETURN_CURRENT,
-  RETURN_ZEROCOPY,
-} LMDB_add_mode;
-
-/**
- * @brief call mdb_put with MDB_NOOVERWRITE flag 
- * 
- * @param info [{ txnp: bigint;
- *                dbi: number;
- *                key: Buffer;
- *                value: Buffer;
- *                mode: AddMode; }]
- * @return Value boolean | Buffer, based on mode:
- *         - RETURN_BOOLEAN: true if successful, false otherwise
- *         - RETURN_CURRENT: true if successful, current value otherwise
- *         - RETURN_ZEROCOPY: as above, but Buffer is returned as zero-copy 
- */
-Value lmdb_add(const CallbackInfo& info) {
-  PUT_PREAMBLE_WITH_ERROR_TYPE(env.Undefined());
-  MDB_val data = unwrap_val(params.Get("value"));
-  auto mode = (LMDB_add_mode) params.Get("mode").As<Number>().Int32Value();
-  unsigned int flags = MDB_NOOVERWRITE;
-  int rc = mdb_put(txn, dbi, &key, &data, flags);
-  DEBUG_PRINT_PUT();
-  if (rc == MDB_KEYEXIST) {
-    // Return value based on mode
-    if (mode == RETURN_BOOLEAN) {
-      return Boolean::New(env, false);
-    }
-    else {
-      return buffer_from_val(
-        env,
-        &data,
-        mode == RETURN_ZEROCOPY ? true : false
-      );
-    }
-  }
-  else if (rc) return throw_undefined(env, rc);
-  else return Boolean::New(env, true);
+  if (rc) return throw_void(env, rc);
 }
 
 /**
@@ -583,22 +527,17 @@ Value lmdb_add(const CallbackInfo& info) {
  * @return Value empty buffer to be filled in by caller before end of transaction.
  */
 Value lmdb_reserve(const CallbackInfo& info) {
-  puts("*** lmdb_reserve(): start");
   PUT_PREAMBLE_WITH_ERROR_TYPE(env.Undefined());
   MDB_val data;
   data.mv_size = (size_t) params.Get("size").As<Number>().Int64Value();
   unsigned int flags = params.Get("flags").As<Number>().Uint32Value() + MDB_RESERVE;
   int rc = mdb_put(txn, dbi, &key, &data, flags);
   DEBUG_PRINT_PUT();
-  if (rc == MDB_KEYEXIST) {
-    CHECK_APPEND_WITH_ERROR_TYPE(env.Undefined());
-    return Boolean::New(env, false);
-  }
-  else if (rc) return throw_undefined(env, rc);
-  else return buffer_from_val(env, &data, true);
+  if (rc) return throw_undefined(env, rc);
+  return buffer_from_val(env, &data, true);
 }
 
-Value lmdb_del(const CallbackInfo& info) {
+void lmdb_del(const CallbackInfo& info) {
   Env env = info.Env();
   MDB_txn *txn = unwrap_txn(info[0]);
   MDB_dbi dbi = unwrap_dbi(info[1]);
@@ -609,9 +548,7 @@ Value lmdb_del(const CallbackInfo& info) {
   DEBUG_PRINT(("mdb_del(%p, %u, %p, %p): %d\n", txn, dbi, &key, &data, rc));
   DEBUG_PRINT(("- key : %p (%zu bytes)\n", key.mv_data, key.mv_size));
   DEBUG_PRINT(("- data: %p (%zu bytes)\n", data.mv_data, data.mv_size));
-  if (rc == MDB_KEYEXIST) return Boolean::New(env, false);
-  else if (rc) return throw_undefined(env, rc);
-  else return Boolean::New(env, true);
+  if (rc) return throw_void(env, rc);
 }
 
 ////////////////////////////////////////////////
@@ -691,44 +628,43 @@ Value lmdb_cursor_get(const CallbackInfo& info) {
   }
   else if (rc) return throw_undefined(env, rc);
 
-  bool returnKey = params.Get("returnKey").IsBoolean()
-    ? params.Get("returnKey").As<Boolean>()
+  bool includeKey = params.Get("includeKey").IsBoolean()
+    ? params.Get("includeKey").As<Boolean>()
     : false;
-  bool returnValue = params.Get("returnValue").IsBoolean()
-    ? params.Get("returnValue").As<Boolean>()
+  bool includeValue = params.Get("includeValue").IsBoolean()
+    ? params.Get("includeValue").As<Boolean>()
     : false;
   bool zeroCopy = params.Get("zeroCopy").IsBoolean()
     ? params.Get("zeroCopy").As<Boolean>()
     : false;
 
   auto result = Object::New(env);
-  if (returnKey) result.Set("key", buffer_from_val(env, &key, false));
-  else result.Set("key", env.Null());
-  if (returnValue) result.Set("value", buffer_from_val(env, &data, zeroCopy));
-  else result.Set("value", env.Null());
+  if (includeKey) result.Set("key", buffer_from_val(env, &key, false));
+  else result.Set("key", env.Undefined());
+  if (includeValue) result.Set("value", buffer_from_val(env, &data, zeroCopy));
+  else result.Set("value", env.Undefined());
   return result;
 }
 
 /**
  * @brief Store by cursor.
  * 
- * @param info [cursorp: bigint,
- *              key: Buffer,
- *              data: Buffer,
- *              flags?: number]
- */
+ * @param info [{ cursorp: bigint;
+ *                key: Buffer;
+ *                value: Buffer;
+ *                flags: number; }] */
 void lmdb_cursor_put(CallbackInfo& info) {
   Env env = info.Env();
-  MDB_cursor *cursor = unwrap_cursor(info[0]);
-  MDB_val key = unwrap_val(info[1]);
-  MDB_val data = unwrap_val(info[2]);
+  Object params = info[0].As<Object>();
+  MDB_cursor *cursor = unwrap_cursor(params.Get("cursorp"));
+  MDB_val key = unwrap_val(params.Get("key"));
+  MDB_val data = unwrap_val(params.Get("value"));
   unsigned int flags = 0;
-  if (info[3].IsNumber()) flags = info[3].As<Number>().Int32Value();
-  DEBUG_PRINT(("before mdb_cursor_put(%p, %p, %p, 0x%x)\n", cursor, &key, &data, flags));
-  DEBUG_PRINT(("- key : %p (%zu bytes)\n", key.mv_data, key.mv_size));
-  DEBUG_PRINT(("- data: %p (%zu bytes)\n", data.mv_data, data.mv_size));
+  if (params.Get("flags").IsNumber()) {
+    flags = params.Get("flags").As<Number>().Int32Value();
+  }
   int rc = mdb_cursor_put(cursor, &key, &data, flags);
-  DEBUG_PRINT(("after  mdb_cursor_put(%p, %p, %p, 0x%x): %d\n", cursor, &key, &data, flags, rc));
+  DEBUG_PRINT(("mdb_cursor_put(%p, %p, %p, 0x%x): %d\n", cursor, &key, &data, flags, rc));
   DEBUG_PRINT(("- key : %p (%zu bytes)\n", key.mv_data, key.mv_size));
   DEBUG_PRINT(("- data: %p (%zu bytes)\n", data.mv_data, data.mv_size));
   if (rc) return throw_void(env, rc);
@@ -847,7 +783,6 @@ Object Init(Env env, Object exports) {
   exports.Set(String::New(env, "mdb_drop"), Function::New(env, lmdb_mdb_drop));
   exports.Set(String::New(env, "get"), Function::New(env, lmdb_get));
   exports.Set(String::New(env, "put"), Function::New(env, lmdb_put));
-  exports.Set(String::New(env, "add"), Function::New(env, lmdb_add));
   exports.Set(String::New(env, "reserve"), Function::New(env, lmdb_reserve));
   exports.Set(String::New(env, "del"), Function::New(env, lmdb_del));
   exports.Set(String::New(env, "cursor_open"), Function::New(env, lmdb_cursor_open));

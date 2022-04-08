@@ -7,7 +7,7 @@ const path_1 = require("path");
 const transaction_1 = require("./transaction");
 const database_1 = require("./database");
 const { isMainThread } = require("worker_threads");
-const { mkdir, stat } = require("fs/promises");
+const { mkdir } = require("fs/promises");
 class Environment {
     constructor(envp) {
         this._isOpen = false;
@@ -71,7 +71,7 @@ class Environment {
         const flags = compact ? constants_1.MDB_CP_COMPACT : 0;
         binding_1.lmdb.env_copy2(this.envp, path, flags);
     }
-    copyAsync(path, compact) {
+    copyAsync() {
         throw new Error("Method not implemented.");
     }
     copyfd(fd, compact) {
@@ -79,7 +79,7 @@ class Environment {
         const flags = compact ? constants_1.MDB_CP_COMPACT : 0;
         binding_1.lmdb.env_copyfd2(this.envp, fd, flags);
     }
-    copyfdAsync(fd, compact) {
+    copyfdAsync() {
         throw new Error("Method not implemented.");
     }
     stat() {

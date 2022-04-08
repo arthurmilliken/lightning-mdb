@@ -23,9 +23,9 @@ export declare class Environment {
     strerror(code: number): string;
     open(path: string, options?: EnvOptions, mode?: number): void;
     copy(path: string, compact?: boolean): void;
-    copyAsync(path: string, compact?: boolean): Promise<void>;
+    copyAsync(): Promise<void>;
     copyfd(fd: number, compact?: boolean): void;
-    copyfdAsync(fd: number, compact?: boolean): Promise<void>;
+    copyfdAsync(): Promise<void>;
     stat(): DbStat;
     info(): EnvInfo;
     sync(force?: boolean): void;

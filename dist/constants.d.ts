@@ -1,9 +1,5 @@
 export declare const MDB_CP_COMPACT = 1;
 export declare const MDB_RDONLY = 131072;
-export declare enum SetFlags {
-    OFF = 0,
-    ON = 1
-}
 export declare enum EnvFlag {
     FIXEDMAP = 1,
     NOSUBDIR = 16384,
@@ -105,9 +101,4 @@ export declare enum CursorOp {
     SET_KEY = 16,
     SET_RANGE = 17,
     PREV_MULTIPLE = 18
-}
-export declare enum AddMode {
-    RETURN_BOOLEAN = 0,
-    RETURN_CURRENT = 1 /** return current value if key already exists */,
-    RETURN_ZEROCOPY = 2 /** return current value with zero-copy semantics if key exists */
 }

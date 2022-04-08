@@ -1,7 +1,16 @@
 import { lmdb } from "./binding";
-import { AddMode, DbFlag, PutFlag } from "./constants";
+import { DbFlag, PutFlag } from "./constants";
 import { Transaction } from "./transaction";
-import { Key, KeyType, Value, PutFlags, DbOptions, DbStat } from "./types";
+import {
+  Key,
+  KeyType,
+  Value,
+  PutFlags,
+  DbOptions,
+  DbStat,
+  Query,
+  DbItem,
+} from "./types";
 import { Buffer } from "buffer";
 import { isMainThread } from "worker_threads";
 import { openEnv } from "./environment";
@@ -53,7 +62,7 @@ export class Database<K extends Key = string> {
         );
       }
       const envp = <bigint>arg0;
-      name = name || null; // coalesce undefined
+      name = name || null;
       const _flags = options ? calcDbFlags(options) : 0;
       if (!txn) throw new Error("Transaction is required");
       this._dbi = lmdb.dbi_open(txn.txnp, name, _flags);
@@ -134,9 +143,9 @@ export class Database<K extends Key = string> {
    *        before the end of the transaction, and before attempting any other
    *        operation involving the same key. This also applies to code being
    *        run in other threads. Use with caution.
-   * @returns Buffer of data item, or null if key not found
+   * @returns Buffer of data item
    */
-  get(key: K, txn?: Transaction, zeroCopy = false): Buffer | null {
+  get(key: K, txn?: Transaction, zeroCopy = false): Buffer {
     this.assertOpen();
     return this.useTransaction((useTxn) => {
       return lmdb.get({
@@ -148,18 +157,10 @@ export class Database<K extends Key = string> {
     }, txn);
   }
 
-  /**
-   * Retrieve item as string
-   * @param key
-   * @param txn
-   * @returns null if not found
-   */
-  getString(key: K, txn?: Transaction): string | null {
+  /** Retrieve item as string */
+  getString(key: K, txn?: Transaction): string {
     return this.useTransaction((useTxn) => {
-      const buf = this.get(key, useTxn);
-      if (!buf) return null;
-      const str = buf.toString();
-      return str;
+      return this.get(key, useTxn).toString();
     }, txn);
   }
 
@@ -169,29 +170,21 @@ export class Database<K extends Key = string> {
    * @param txn
    * @returns null if not found
    */
-  getNumber(key: K, txn?: Transaction): number | null {
+  getNumber(key: K, txn?: Transaction): number {
     return this.useTransaction((useTxn) => {
-      const buf = this.get(key, useTxn);
-      if (!buf) return null;
-      const num = buf.readDoubleBE();
-      detachBuffer(buf);
-      return num;
+      return this.get(key, useTxn).readDoubleBE();
     }, txn);
   }
 
   /**
-   * Retrieve item as boolean
+   * Retrieve value as boolean
    * @param key
    * @param txn
    * @returns null if not found
    */
   getBoolean(key: K, txn?: Transaction): boolean | null {
     return this.useTransaction((useTxn) => {
-      const buf = this.get(key, useTxn);
-      if (!buf) return null;
-      const bool = buf.readUInt8() ? true : false;
-      detachBuffer(buf);
-      return bool;
+      return this.get(key, useTxn).readUInt8() ? true : false;
     }, txn);
   }
 
@@ -206,59 +199,20 @@ export class Database<K extends Key = string> {
     txn.assertOpen();
     const keyBuf = this.encodeKey(key);
     const valueBuf = this.encodeValue(value);
+    const _flags =
+      (flags?.append ? PutFlag.APPEND : 0) +
+      (flags?.noOverwrite ? PutFlag.NOOVERWRITE : 0);
     lmdb.put({
       txnp: txn.txnp,
       dbi: this._dbi,
       key: keyBuf,
       value: valueBuf,
-      flags: flags?.append ? PutFlag.APPEND : 0,
+      flags: _flags,
     });
   }
 
   putAsync(key: K, value: Value): Promise<Buffer | null> {
     throw new Error("Method not implemented.");
-  }
-
-  /**
-   * Add item into database if the key does not already exist.
-   * @param key the key to store
-   * @param value the value to store
-   * @param txn an open writable transaction
-   * @param {AddMode} mode (default RETURN_BOOLEAN)
-   *        RETURN_BOOLEAN - return true if successful, false if key already exists.
-   *        RETURN_CURRENT - return true if successful, otherwise return current
-   *          value as Buffer.
-   *        RETURN_ZEROCOPY - as RETURN_CURRENT, but returned Buffer is created
-   *          using zero-copy semantics. This buffer must be detached by calling
-   *          detachBuffer() before the end of the transaction, and before
-   *          attempting any other operation involving the same key. This also
-   *          applies to code being run in other threads. Use with caution.
-   * @returns boolean or Buffer. see `mode` param for details */
-  add(
-    key: K,
-    value: Value,
-    txn: Transaction,
-    mode = AddMode.RETURN_BOOLEAN
-  ): boolean | Buffer {
-    this.assertOpen();
-    txn.assertOpen();
-    const keyBuf = this.encodeKey(key);
-    const valueBuf = this.encodeValue(value);
-    return lmdb.add({
-      txnp: txn.txnp,
-      dbi: this._dbi,
-      key: keyBuf,
-      value: valueBuf,
-      mode,
-    });
-  }
-
-  addAsync(
-    key: K,
-    value: Value,
-    mode: Exclude<AddMode, AddMode.RETURN_ZEROCOPY>
-  ): boolean | Buffer {
-    throw new Error("Method not implementd.");
   }
 
   /**
@@ -268,15 +222,10 @@ export class Database<K extends Key = string> {
    * @param size the size in Bytes to allocate for the Buffer
    * @param txn an open writable transaction
    * @param flags
-   * @returns an empty buffer of `size` bytes, or false if
-   *          `flags.noOverwrite == true` and key already exists.
+   * @returns an empty buffer of `size` bytes, to be filled in before the
+   *          transaction ends.
    */
-  reserve(
-    key: K,
-    size: number,
-    txn: Transaction,
-    flags?: PutFlags & { noOverwrite?: boolean }
-  ): Buffer | false {
+  reserve(key: K, size: number, txn: Transaction, flags?: PutFlags): Buffer {
     this.assertOpen();
     txn.assertOpen();
     const keyBuf = this.encodeKey(key);
@@ -296,12 +245,11 @@ export class Database<K extends Key = string> {
    * Removes key/data pair from the database.
    * @param key the key to delete
    * @param txn an open writeable transaction
-   * @returns true if successful, false if the key does not exist.
    */
-  del(key: K, txn: Transaction): boolean {
+  del(key: K, txn: Transaction): void {
     this.assertOpen();
     const keyBuf = this.encodeKey(key);
-    return lmdb.del(txn.txnp, this._dbi, keyBuf);
+    lmdb.del(txn.txnp, this._dbi, keyBuf);
   }
 
   delAsync(key: K): Promise<void> {
@@ -315,14 +263,222 @@ export class Database<K extends Key = string> {
    * @returns < 0 if a < b, 0 if a == b, > 0 if a > b
    */
   compare(a: K, b: K, txn?: Transaction): number {
+    return this.compareBuffer(this.encodeKey(a), this.encodeKey(b), txn);
+  }
+
+  compareBuffer(a: Buffer, b: Buffer, txn?: Transaction): number {
     this.assertOpen();
-    const aBuf = this.encodeKey(a);
-    const bBuf = this.encodeKey(b);
     let useTxn = txn;
     if (!useTxn) useTxn = new Transaction(this.envp, true);
-    const cmp = lmdb.cmp(useTxn.txnp, this._dbi, aBuf, bBuf);
+    const cmp = lmdb.cmp(useTxn.txnp, this._dbi, a, b);
     if (!txn) useTxn.abort();
     return cmp;
+  }
+
+  encodeKey(key: Key): Buffer {
+    if (typeof key !== this.keyType) {
+      throw new TypeError(
+        `Key must be of type ${this.keyType}, found ${typeof key} instead`
+      );
+    }
+    if (key instanceof Buffer) return key;
+    if (typeof key === "string") return Buffer.from(key);
+    if (typeof key === "number") {
+      assertUSafe(key);
+      const buf = Buffer.allocUnsafe(8);
+      buf.writeBigUInt64BE(BigInt(key));
+      return buf;
+    }
+    throw new TypeError(`Invalid key: ${key}`);
+  }
+
+  decodeKey(keyBuf: Buffer): K {
+    if (this.keyType === "Buffer") return <K>keyBuf;
+    if (this.keyType === "string") return <K>keyBuf.toString();
+    if (this.keyType === "number") return <K>Number(keyBuf.readBigUInt64BE());
+    throw new Error(`Unknown keyType: ${this.keyType}`);
+  }
+
+  encodeValue(value: Value): Buffer {
+    if (value instanceof Buffer) return value;
+    if (typeof value === "string") return Buffer.from(value);
+    if (typeof value === "number") {
+      const buf = Buffer.allocUnsafe(8);
+      buf.writeDoubleBE(value);
+      return buf;
+    }
+    if (typeof value === "boolean") {
+      const buf = Buffer.allocUnsafe(1);
+      buf.writeUInt8(value ? 1 : 0);
+      return buf;
+    }
+    throw new TypeError(`Invalid value: ${value}`);
+  }
+
+  /** @returns a cursor for this database, which the caller can use to navigate keys */
+  cursor(txn?: Transaction): Cursor<K> {
+    return this.useTransaction((useTxn) => {
+      return new Cursor<K>(useTxn, this);
+    }, txn);
+  }
+
+  /** @returns an iterator over items (each item as DbItem<K, Buffer>) */
+  *getItems(
+    q?: Query<K> & { zeroCopy?: boolean },
+    txn?: Transaction,
+    includeKey = true,
+    includeValue = true
+  ): IterableIterator<DbItem<K, Buffer>> {
+    // Set up transaction
+    let useTxn = txn;
+    if (!useTxn) useTxn = new Transaction(this._envp, true);
+    const cursor = new Cursor<K>(useTxn, this);
+
+    // Set up navigation functions, based on q.reverse
+    let next = q?.reverse ? cursor.prev.bind(cursor) : cursor.next.bind(cursor);
+    let compare = (a: Buffer, b: Buffer) => {
+      return this.compareBuffer(a, b, useTxn) * (q?.reverse ? -1 : 1);
+    };
+    let find = (start: K): boolean => {
+      if (q?.reverse) {
+        if (!cursor.find(start)) return cursor.prev();
+        else return true;
+      } else {
+        return cursor.findNext(start);
+      }
+    };
+    const exit = () => {
+      cursor.close();
+      if (!txn) useTxn?.abort();
+    };
+
+    // Start iteration
+    let found = 0;
+    const endBuf = q?.end ? this.encodeKey(q.end) : undefined;
+    if (q?.start) {
+      if (!find(q.start)) {
+        return exit();
+      }
+    } else if (!next()) return exit;
+    if (q?.offset) {
+      if (!next(q.offset - 1)) return exit();
+    }
+    const rawItem = cursor.rawItem(
+      endBuf ? true : includeKey,
+      includeValue,
+      q?.zeroCopy
+    );
+    if (endBuf && compare(<Buffer>rawItem.key, endBuf) > 0) return exit();
+    found++;
+    yield {
+      key: includeKey && rawItem.key ? this.decodeKey(rawItem.key) : undefined,
+      value: rawItem.value,
+    };
+
+    // Iterate over remainder
+    while (next()) {
+      if (q?.limit && ++found > q.limit) return exit();
+      const rawItem = cursor.rawItem(
+        endBuf ? true : includeKey,
+        includeValue,
+        q?.zeroCopy
+      );
+      if (endBuf && compare(<Buffer>rawItem.key, endBuf) > 0) return exit();
+      yield {
+        key:
+          includeKey && rawItem.key ? this.decodeKey(rawItem.key) : undefined,
+        value: rawItem.value,
+      };
+    }
+    exit();
+  }
+
+  /** @returns an iterator over keys */
+  *getKeys(q?: Query<K>, txn?: Transaction): IterableIterator<K> {
+    for (const item of this.getItems(q, txn, true, false)) {
+      if (!item.key) break;
+      yield item.key;
+    }
+  }
+
+  /** @returns an iterator over values (each value as Buffer) */
+  *getValues(
+    q?: Query<K> & { zeroCopy?: boolean },
+    txn?: Transaction
+  ): IterableIterator<Buffer> {
+    for (const item of this.getItems(q, txn, false, true)) {
+      if (!item.value) break;
+      yield item.value;
+    }
+  }
+
+  /** @returns an iterator over values (each value as string) */
+  *getStrings(q?: Query<K>, txn?: Transaction): IterableIterator<string> {
+    for (const value of this.getValues(q, txn)) {
+      yield value.toString();
+    }
+  }
+  /** @returns an iterator over values (each value as number) */
+  *getNumbers(q?: Query<K>, txn?: Transaction): IterableIterator<number> {
+    for (const value of this.getValues(q, txn)) {
+      yield value.readDoubleBE();
+    }
+  }
+  /** @returns an iterator over values (each value as boolean) */
+  *getBooleans(q?: Query<K>, txn?: Transaction): IterableIterator<boolean> {
+    for (const value of this.getValues(q, txn)) {
+      yield bufReadBoolean(value);
+    }
+  }
+
+  /** @returns an iterator over items (each item as DbItem<K, string>) */
+  *getStringItems(
+    q?: Query<K>,
+    txn?: Transaction
+  ): IterableIterator<DbItem<K, string>> {
+    for (const item of this.getItems(q, txn, true, true)) {
+      if (!(item.key || item.value)) break;
+      yield {
+        key: item.key,
+        value: item.value?.toString(),
+      };
+    }
+  }
+  /** @returns an iterator over items (each item as DbItem<K, number>) */
+  *getNumberItems(
+    q?: Query<K>,
+    txn?: Transaction
+  ): IterableIterator<DbItem<K, number>> {
+    for (const item of this.getItems(q, txn, true, true)) {
+      if (!(item.key || item.value)) break;
+      yield {
+        key: item.key,
+        value: item.value?.readDoubleBE(),
+      };
+    }
+  }
+
+  /** @returns an iterator over items (each item as DbItem<K, boolean>) */
+  *getBooleanItems(
+    q?: Query<K>,
+    txn?: Transaction
+  ): IterableIterator<DbItem<K, boolean>> {
+    for (const item of this.getItems(q, txn, true, true)) {
+      if (!(item.key || item.value)) break;
+      yield {
+        key: item.key,
+        value: item.value ? bufReadBoolean(item.value) : false,
+      };
+    }
+  }
+
+  /** @returns a count of items matching the given query */
+  getCount(q?: Omit<Query<K>, "reverse">, txn?: Transaction): number {
+    let count = 0;
+    for (const item of this.getItems(q, txn, false, false)) {
+      count++;
+    }
+    return count;
   }
 
   /** Helper function for handling optional transaction argument */
@@ -343,39 +499,6 @@ export class Database<K extends Key = string> {
   protected assertOpen(): void {
     if (!this.isOpen) throw new Error("Database is already closed.");
   }
-
-  protected encodeKey(key: Key): Buffer {
-    if (typeof key !== this.keyType) {
-      throw new TypeError(
-        `Key must be of type ${this.keyType}, found ${typeof key} instead`
-      );
-    }
-    if (key instanceof Buffer) return key;
-    if (typeof key === "string") return Buffer.from(key);
-    if (typeof key === "number") {
-      assertU64(key);
-      const buf = Buffer.allocUnsafe(8);
-      buf.writeBigUInt64BE(BigInt(key));
-      return buf;
-    }
-    throw new TypeError(`Invalid key: ${key}`);
-  }
-
-  protected encodeValue(value: Value): Buffer {
-    if (value instanceof Buffer) return value;
-    if (typeof value === "string") return Buffer.from(value);
-    if (typeof value === "number") {
-      const buf = Buffer.allocUnsafe(8);
-      buf.writeDoubleBE(value);
-      return buf;
-    }
-    if (typeof value === "boolean") {
-      const buf = Buffer.allocUnsafe(1);
-      buf.writeUInt8(value ? 1 : 0);
-      return buf;
-    }
-    throw new TypeError(`Invalid value: ${value}`);
-  }
 }
 
 export function calcDbFlags(flags: DbOptions) {
@@ -389,7 +512,7 @@ export function detachBuffer(buf: Buffer) {
   lmdb.detach_buffer(buf);
 }
 
-export function assertU64(num: number) {
+export function assertUSafe(num: number) {
   if (
     typeof num !== "number" ||
     num < 0 ||
@@ -397,7 +520,7 @@ export function assertU64(num: number) {
     Math.floor(num) !== num
   ) {
     throw new TypeError(
-      `${num} is not zero or a positive integer below Number.MAX_SAFE_INTEGER`
+      `${num} must be an unsigned integer below ${Number.MAX_SAFE_INTEGER}`
     );
   }
 }
@@ -421,15 +544,48 @@ async function main() {
   const db = env.openDB(null);
   const txn = env.beginTxn();
   db.clear(txn);
-  db.put("a", "apple seeds", txn);
-  db.put("b", "banana peels", txn);
-  db.put("c", "cherry pits", txn);
-  console.log({
-    a: db.getString("a", txn),
-    b: db.getString("b", txn),
-    c: db.getString("c", txn),
-  });
+  db.put("a", "alpha", txn);
+  db.put("b", "bravo", txn);
+  db.put("c", "charlie", txn);
+  db.put("d", "delta", txn);
+  db.put("e", "echo", txn);
+  db.put("f", "foxtrot", txn);
+  db.put("g", "golf", txn);
   txn.commit();
+  const q: Query = {
+    limit: 3,
+  };
+  for (const key of db.getKeys(q)) {
+    console.log({ key });
+  }
+  for (const value of db.getStrings(q)) {
+    console.log({ value });
+  }
+  for (const item of db.getItems(q)) {
+    console.log({
+      key: item.key,
+      value: item.value?.toString(),
+    });
+  }
+
+  const txn2 = env.beginTxn();
+  db.put("x", true, txn2);
+  db.put("y", false, txn2);
+  db.put("z", true, txn2);
+  console.log(Array.from(db.getBooleanItems({ start: "x", end: "z" }, txn2)));
+  db.put("n1", 1, txn2);
+  db.put("n2", 2, txn2);
+  db.put("n3", 3, txn2);
+  console.log(Array.from(db.getNumberItems({ start: "n", limit: 3 }, txn2)));
+  let start = process.hrtime();
+  const count = db.getCount({}, txn2);
+  let diff = process.hrtime(start);
+  console.log({ count, diff });
+  start = process.hrtime();
+  const all = Array.from(db.getItems({}, txn2));
+  diff = process.hrtime(start);
+  console.log({ all, diff });
+  txn2.abort();
   db.close();
   env.close();
 }

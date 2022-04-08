@@ -4,7 +4,6 @@ const binding_1 = require("./binding");
 const constants_1 = require("./constants");
 function main() {
     console.log("hello from start!");
-    // "real" methods
     console.log(binding_1.lmdb.version());
     console.log({ err: 5, strerror: binding_1.lmdb.strerror(5) });
     const envp = binding_1.lmdb.env_create();
@@ -52,22 +51,27 @@ function main() {
     }
     const dbuf = binding_1.lmdb.get({ txnp, dbi, key: d });
     console.log({ d: dbuf?.toString(), m: "after reserve write + fetch" });
-    const existing = binding_1.lmdb.add({
-        txnp,
-        dbi,
-        key: a,
-        value: Buffer.from("alfalfa"),
-        mode: constants_1.AddMode.RETURN_CURRENT,
-    });
-    console.log({ a: a.toString(), existing: existing?.toString() });
+    try {
+        binding_1.lmdb.put({
+            txnp,
+            dbi,
+            key: a,
+            value: Buffer.from("alfalfa"),
+            flags: constants_1.PutFlag.NOOVERWRITE,
+        });
+        console.log("should have thrown");
+    }
+    catch (err) {
+        console.log({ m: "expect KEYEXIST error", err });
+    }
     const cursorp = binding_1.lmdb.cursor_open(txnp, dbi);
     let success = binding_1.lmdb.cursor_get({ cursorp, op: constants_1.CursorOp.NEXT });
     while (success) {
         const item = binding_1.lmdb.cursor_get({
             cursorp,
             op: constants_1.CursorOp.GET_CURRENT,
-            returnKey: true,
-            returnValue: true,
+            includeKey: true,
+            includeValue: true,
         });
         console.log({
             m: "cursor.GET_CURRENT",
@@ -76,37 +80,6 @@ function main() {
         });
         success = binding_1.lmdb.cursor_get({ cursorp, op: constants_1.CursorOp.NEXT });
     }
-    console.log("***before cursor_put");
-    binding_1.lmdb.cursor_put(cursorp, c, Buffer.from("cherry"), constants_1.PutFlag.NOOVERWRITE);
-    console.log("***after cursor_put");
-    // for (
-    //   let entry = lmdb.cursor_get(cursorp, CursorOp.NEXT);
-    //   entry;
-    //   entry = lmdb.cursor_get(cursorp, CursorOp.NEXT)
-    // ) {
-    //   const [key, data] = entry;
-    //   let dataStr = data?.toString();
-    //   console.log({
-    //     m: "cursor.next()",
-    //     key: key?.toString(),
-    //     data: dataStr,
-    //   });
-    //   lmdb.cursor_put(cursorp, key, Buffer.from(dataStr + " foo"));
-    // }
-    // for (
-    //   let entry = lmdb.cursor_get(cursorp, CursorOp.LAST);
-    //   entry;
-    //   entry = lmdb.cursor_get(cursorp, CursorOp.PREV)
-    // ) {
-    //   const [key, data] = entry;
-    //   let dataStr = data?.toString();
-    //   console.log({
-    //     m: "cursor.prev()",
-    //     key: key?.toString(),
-    //     data: dataStr,
-    //   });
-    //   lmdb.cursor_del(cursorp);
-    // }
     binding_1.lmdb.cursor_close(cursorp);
     binding_1.lmdb.txn_commit(txnp);
     binding_1.lmdb.dbi_close(envp, dbi);

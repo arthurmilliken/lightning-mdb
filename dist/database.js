@@ -1,12 +1,13 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.bufReadBoolean = exports.bufWriteBoolean = exports.assertU64 = exports.detachBuffer = exports.calcDbFlags = exports.Database = void 0;
+exports.bufReadBoolean = exports.bufWriteBoolean = exports.assertUSafe = exports.detachBuffer = exports.calcDbFlags = exports.Database = void 0;
 const binding_1 = require("./binding");
 const constants_1 = require("./constants");
 const transaction_1 = require("./transaction");
 const buffer_1 = require("buffer");
 const worker_threads_1 = require("worker_threads");
 const environment_1 = require("./environment");
+const cursor_1 = require("./cursor");
 class Database {
     constructor(arg0, name, txn, options) {
         this._isOpen = false;
@@ -15,7 +16,7 @@ class Database {
                 throw new Error("Cannot use this constructor from Worker Thread. Use Database.deserialize() instead.");
             }
             const envp = arg0;
-            name = name || null; // coalesce undefined
+            name = name || null;
             const _flags = options ? calcDbFlags(options) : 0;
             if (!txn)
                 throw new Error("Transaction is required");
@@ -98,7 +99,7 @@ class Database {
      *        before the end of the transaction, and before attempting any other
      *        operation involving the same key. This also applies to code being
      *        run in other threads. Use with caution.
-     * @returns Buffer of data item, or null if key not found
+     * @returns Buffer of data item
      */
     get(key, txn, zeroCopy = false) {
         this.assertOpen();
@@ -111,19 +112,10 @@ class Database {
             });
         }, txn);
     }
-    /**
-     * Retrieve item as string
-     * @param key
-     * @param txn
-     * @returns null if not found
-     */
+    /** Retrieve item as string */
     getString(key, txn) {
         return this.useTransaction((useTxn) => {
-            const buf = this.get(key, useTxn);
-            if (!buf)
-                return null;
-            const str = buf.toString();
-            return str;
+            return this.get(key, useTxn).toString();
         }, txn);
     }
     /**
@@ -134,28 +126,18 @@ class Database {
      */
     getNumber(key, txn) {
         return this.useTransaction((useTxn) => {
-            const buf = this.get(key, useTxn);
-            if (!buf)
-                return null;
-            const num = buf.readDoubleBE();
-            detachBuffer(buf);
-            return num;
+            return this.get(key, useTxn).readDoubleBE();
         }, txn);
     }
     /**
-     * Retrieve item as boolean
+     * Retrieve value as boolean
      * @param key
      * @param txn
      * @returns null if not found
      */
     getBoolean(key, txn) {
         return this.useTransaction((useTxn) => {
-            const buf = this.get(key, useTxn);
-            if (!buf)
-                return null;
-            const bool = buf.readUInt8() ? true : false;
-            detachBuffer(buf);
-            return bool;
+            return this.get(key, useTxn).readUInt8() ? true : false;
         }, txn);
     }
     /**
@@ -169,47 +151,18 @@ class Database {
         txn.assertOpen();
         const keyBuf = this.encodeKey(key);
         const valueBuf = this.encodeValue(value);
+        const _flags = (flags?.append ? constants_1.PutFlag.APPEND : 0) +
+            (flags?.noOverwrite ? constants_1.PutFlag.NOOVERWRITE : 0);
         binding_1.lmdb.put({
             txnp: txn.txnp,
             dbi: this._dbi,
             key: keyBuf,
             value: valueBuf,
-            flags: flags?.append ? constants_1.PutFlag.APPEND : 0,
+            flags: _flags,
         });
     }
     putAsync(key, value) {
         throw new Error("Method not implemented.");
-    }
-    /**
-     * Add item into database if the key does not already exist.
-     * @param key the key to store
-     * @param value the value to store
-     * @param txn an open writable transaction
-     * @param {AddMode} mode (default RETURN_BOOLEAN)
-     *        RETURN_BOOLEAN - return true if successful, false if key already exists.
-     *        RETURN_CURRENT - return true if successful, otherwise return current
-     *          value as Buffer.
-     *        RETURN_ZEROCOPY - as RETURN_CURRENT, but returned Buffer is created
-     *          using zero-copy semantics. This buffer must be detached by calling
-     *          detachBuffer() before the end of the transaction, and before
-     *          attempting any other operation involving the same key. This also
-     *          applies to code being run in other threads. Use with caution.
-     * @returns boolean or Buffer. see `mode` param for details */
-    add(key, value, txn, mode = constants_1.AddMode.RETURN_BOOLEAN) {
-        this.assertOpen();
-        txn.assertOpen();
-        const keyBuf = this.encodeKey(key);
-        const valueBuf = this.encodeValue(value);
-        return binding_1.lmdb.add({
-            txnp: txn.txnp,
-            dbi: this._dbi,
-            key: keyBuf,
-            value: valueBuf,
-            mode,
-        });
-    }
-    addAsync(key, value, mode) {
-        throw new Error("Method not implementd.");
     }
     /**
      * Reserve space inside the database at the current key, and return a Buffer
@@ -218,8 +171,8 @@ class Database {
      * @param size the size in Bytes to allocate for the Buffer
      * @param txn an open writable transaction
      * @param flags
-     * @returns an empty buffer of `size` bytes, or false if
-     *          `flags.noOverwrite == true` and key already exists.
+     * @returns an empty buffer of `size` bytes, to be filled in before the
+     *          transaction ends.
      */
     reserve(key, size, txn, flags) {
         this.assertOpen();
@@ -239,12 +192,11 @@ class Database {
      * Removes key/data pair from the database.
      * @param key the key to delete
      * @param txn an open writeable transaction
-     * @returns true if successful, false if the key does not exist.
      */
     del(key, txn) {
         this.assertOpen();
         const keyBuf = this.encodeKey(key);
-        return binding_1.lmdb.del(txn.txnp, this._dbi, keyBuf);
+        binding_1.lmdb.del(txn.txnp, this._dbi, keyBuf);
     }
     delAsync(key) {
         throw new Error("Method not implemented.");
@@ -256,16 +208,204 @@ class Database {
      * @returns < 0 if a < b, 0 if a == b, > 0 if a > b
      */
     compare(a, b, txn) {
+        return this.compareBuffer(this.encodeKey(a), this.encodeKey(b), txn);
+    }
+    compareBuffer(a, b, txn) {
         this.assertOpen();
-        const aBuf = this.encodeKey(a);
-        const bBuf = this.encodeKey(b);
         let useTxn = txn;
         if (!useTxn)
             useTxn = new transaction_1.Transaction(this.envp, true);
-        const cmp = binding_1.lmdb.cmp(useTxn.txnp, this._dbi, aBuf, bBuf);
+        const cmp = binding_1.lmdb.cmp(useTxn.txnp, this._dbi, a, b);
         if (!txn)
             useTxn.abort();
         return cmp;
+    }
+    encodeKey(key) {
+        if (typeof key !== this.keyType) {
+            throw new TypeError(`Key must be of type ${this.keyType}, found ${typeof key} instead`);
+        }
+        if (key instanceof buffer_1.Buffer)
+            return key;
+        if (typeof key === "string")
+            return buffer_1.Buffer.from(key);
+        if (typeof key === "number") {
+            assertUSafe(key);
+            const buf = buffer_1.Buffer.allocUnsafe(8);
+            buf.writeBigUInt64BE(BigInt(key));
+            return buf;
+        }
+        throw new TypeError(`Invalid key: ${key}`);
+    }
+    decodeKey(keyBuf) {
+        if (this.keyType === "Buffer")
+            return keyBuf;
+        if (this.keyType === "string")
+            return keyBuf.toString();
+        if (this.keyType === "number")
+            return Number(keyBuf.readBigUInt64BE());
+        throw new Error(`Unknown keyType: ${this.keyType}`);
+    }
+    encodeValue(value) {
+        if (value instanceof buffer_1.Buffer)
+            return value;
+        if (typeof value === "string")
+            return buffer_1.Buffer.from(value);
+        if (typeof value === "number") {
+            const buf = buffer_1.Buffer.allocUnsafe(8);
+            buf.writeDoubleBE(value);
+            return buf;
+        }
+        if (typeof value === "boolean") {
+            const buf = buffer_1.Buffer.allocUnsafe(1);
+            buf.writeUInt8(value ? 1 : 0);
+            return buf;
+        }
+        throw new TypeError(`Invalid value: ${value}`);
+    }
+    /** @returns a cursor for this database, which the caller can use to navigate keys */
+    cursor(txn) {
+        return this.useTransaction((useTxn) => {
+            return new cursor_1.Cursor(useTxn, this);
+        }, txn);
+    }
+    /** @returns an iterator over items (each item as DbItem<K, Buffer>) */
+    *getItems(q, txn, includeKey = true, includeValue = true) {
+        // Set up transaction
+        let useTxn = txn;
+        if (!useTxn)
+            useTxn = new transaction_1.Transaction(this._envp, true);
+        const cursor = new cursor_1.Cursor(useTxn, this);
+        // Set up navigation functions, based on q.reverse
+        let next = q?.reverse ? cursor.prev.bind(cursor) : cursor.next.bind(cursor);
+        let compare = (a, b) => {
+            return this.compareBuffer(a, b, useTxn) * (q?.reverse ? -1 : 1);
+        };
+        let find = (start) => {
+            if (q?.reverse) {
+                if (!cursor.find(start))
+                    return cursor.prev();
+                else
+                    return true;
+            }
+            else {
+                return cursor.findNext(start);
+            }
+        };
+        const exit = () => {
+            cursor.close();
+            if (!txn)
+                useTxn?.abort();
+        };
+        // Start iteration
+        let found = 0;
+        const endBuf = q?.end ? this.encodeKey(q.end) : undefined;
+        if (q?.start) {
+            if (!find(q.start)) {
+                return exit();
+            }
+        }
+        else if (!next())
+            return exit;
+        if (q?.offset) {
+            if (!next(q.offset - 1))
+                return exit();
+        }
+        const rawItem = cursor.rawItem(endBuf ? true : includeKey, includeValue, q?.zeroCopy);
+        if (endBuf && compare(rawItem.key, endBuf) > 0)
+            return exit();
+        found++;
+        yield {
+            key: includeKey && rawItem.key ? this.decodeKey(rawItem.key) : undefined,
+            value: rawItem.value,
+        };
+        // Iterate over remainder
+        while (next()) {
+            if (q?.limit && ++found > q.limit)
+                return exit();
+            const rawItem = cursor.rawItem(endBuf ? true : includeKey, includeValue, q?.zeroCopy);
+            if (endBuf && compare(rawItem.key, endBuf) > 0)
+                return exit();
+            yield {
+                key: includeKey && rawItem.key ? this.decodeKey(rawItem.key) : undefined,
+                value: rawItem.value,
+            };
+        }
+        exit();
+    }
+    /** @returns an iterator over keys */
+    *getKeys(q, txn) {
+        for (const item of this.getItems(q, txn, true, false)) {
+            if (!item.key)
+                break;
+            yield item.key;
+        }
+    }
+    /** @returns an iterator over values (each value as Buffer) */
+    *getValues(q, txn) {
+        for (const item of this.getItems(q, txn, false, true)) {
+            if (!item.value)
+                break;
+            yield item.value;
+        }
+    }
+    /** @returns an iterator over values (each value as string) */
+    *getStrings(q, txn) {
+        for (const value of this.getValues(q, txn)) {
+            yield value.toString();
+        }
+    }
+    /** @returns an iterator over values (each value as number) */
+    *getNumbers(q, txn) {
+        for (const value of this.getValues(q, txn)) {
+            yield value.readDoubleBE();
+        }
+    }
+    /** @returns an iterator over values (each value as boolean) */
+    *getBooleans(q, txn) {
+        for (const value of this.getValues(q, txn)) {
+            yield bufReadBoolean(value);
+        }
+    }
+    /** @returns an iterator over items (each item as DbItem<K, string>) */
+    *getStringItems(q, txn) {
+        for (const item of this.getItems(q, txn, true, true)) {
+            if (!(item.key || item.value))
+                break;
+            yield {
+                key: item.key,
+                value: item.value?.toString(),
+            };
+        }
+    }
+    /** @returns an iterator over items (each item as DbItem<K, number>) */
+    *getNumberItems(q, txn) {
+        for (const item of this.getItems(q, txn, true, true)) {
+            if (!(item.key || item.value))
+                break;
+            yield {
+                key: item.key,
+                value: item.value?.readDoubleBE(),
+            };
+        }
+    }
+    /** @returns an iterator over items (each item as DbItem<K, boolean>) */
+    *getBooleanItems(q, txn) {
+        for (const item of this.getItems(q, txn, true, true)) {
+            if (!(item.key || item.value))
+                break;
+            yield {
+                key: item.key,
+                value: item.value ? bufReadBoolean(item.value) : false,
+            };
+        }
+    }
+    /** @returns a count of items matching the given query */
+    getCount(q, txn) {
+        let count = 0;
+        for (const item of this.getItems(q, txn, false, false)) {
+            count++;
+        }
+        return count;
     }
     /** Helper function for handling optional transaction argument */
     useTransaction(callback, txn) {
@@ -286,39 +426,6 @@ class Database {
         if (!this.isOpen)
             throw new Error("Database is already closed.");
     }
-    encodeKey(key) {
-        if (typeof key !== this.keyType) {
-            throw new TypeError(`Key must be of type ${this.keyType}, found ${typeof key} instead`);
-        }
-        if (key instanceof buffer_1.Buffer)
-            return key;
-        if (typeof key === "string")
-            return buffer_1.Buffer.from(key);
-        if (typeof key === "number") {
-            assertU64(key);
-            const buf = buffer_1.Buffer.allocUnsafe(8);
-            buf.writeBigUInt64BE(BigInt(key));
-            return buf;
-        }
-        throw new TypeError(`Invalid key: ${key}`);
-    }
-    encodeValue(value) {
-        if (value instanceof buffer_1.Buffer)
-            return value;
-        if (typeof value === "string")
-            return buffer_1.Buffer.from(value);
-        if (typeof value === "number") {
-            const buf = buffer_1.Buffer.allocUnsafe(8);
-            buf.writeDoubleBE(value);
-            return buf;
-        }
-        if (typeof value === "boolean") {
-            const buf = buffer_1.Buffer.allocUnsafe(1);
-            buf.writeUInt8(value ? 1 : 0);
-            return buf;
-        }
-        throw new TypeError(`Invalid value: ${value}`);
-    }
 }
 exports.Database = Database;
 function calcDbFlags(flags) {
@@ -330,15 +437,15 @@ function detachBuffer(buf) {
     binding_1.lmdb.detach_buffer(buf);
 }
 exports.detachBuffer = detachBuffer;
-function assertU64(num) {
+function assertUSafe(num) {
     if (typeof num !== "number" ||
         num < 0 ||
         num > Number.MAX_SAFE_INTEGER ||
         Math.floor(num) !== num) {
-        throw new TypeError(`${num} is not zero or a positive integer below Number.MAX_SAFE_INTEGER`);
+        throw new TypeError(`${num} must be an unsigned integer below ${Number.MAX_SAFE_INTEGER}`);
     }
 }
-exports.assertU64 = assertU64;
+exports.assertUSafe = assertUSafe;
 function bufWriteBoolean(buf, val, offset = 0) {
     buf.writeUInt8(val ? 1 : 0, offset);
 }
@@ -352,15 +459,47 @@ async function main() {
     const db = env.openDB(null);
     const txn = env.beginTxn();
     db.clear(txn);
-    db.put("a", "apple seeds", txn);
-    db.put("b", "banana peels", txn);
-    db.put("c", "cherry pits", txn);
-    console.log({
-        a: db.getString("a", txn),
-        b: db.getString("b", txn),
-        c: db.getString("c", txn),
-    });
+    db.put("a", "alpha", txn);
+    db.put("b", "bravo", txn);
+    db.put("c", "charlie", txn);
+    db.put("d", "delta", txn);
+    db.put("e", "echo", txn);
+    db.put("f", "foxtrot", txn);
+    db.put("g", "golf", txn);
     txn.commit();
+    const q = {
+        limit: 3,
+    };
+    for (const key of db.getKeys(q)) {
+        console.log({ key });
+    }
+    for (const value of db.getStrings(q)) {
+        console.log({ value });
+    }
+    for (const item of db.getItems(q)) {
+        console.log({
+            key: item.key,
+            value: item.value?.toString(),
+        });
+    }
+    const txn2 = env.beginTxn();
+    db.put("x", true, txn2);
+    db.put("y", false, txn2);
+    db.put("z", true, txn2);
+    console.log(Array.from(db.getBooleanItems({ start: "x", end: "z" }, txn2)));
+    db.put("n1", 1, txn2);
+    db.put("n2", 2, txn2);
+    db.put("n3", 3, txn2);
+    console.log(Array.from(db.getNumberItems({ start: "n", limit: 3 }, txn2)));
+    let start = process.hrtime();
+    const count = db.getCount({}, txn2);
+    let diff = process.hrtime(start);
+    console.log({ count, diff });
+    start = process.hrtime();
+    const all = Array.from(db.getItems({}, txn2));
+    diff = process.hrtime(start);
+    console.log({ all, diff });
+    txn2.abort();
     db.close();
     env.close();
 }

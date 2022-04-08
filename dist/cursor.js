@@ -6,27 +6,17 @@ const constants_1 = require("./constants");
 const environment_1 = require("./environment");
 const notFound = "Item not found";
 class Cursor {
-    constructor(txnp, dbi, keyType) {
-        this._cursorp = binding_1.lmdb.cursor_open(txnp, dbi);
-        this._txnp = txnp;
-        this._dbi = dbi;
-        this._keyType = keyType;
+    constructor(txn, db) {
         this._isOpen = true;
+        this._cursorp = binding_1.lmdb.cursor_open(txn.txnp, db.dbi);
+        this.txn = txn;
+        this.db = db;
     }
     get cursorp() {
         return this._cursorp;
     }
-    get txnp() {
-        return this._txnp;
-    }
-    get dbi() {
-        return this._dbi;
-    }
     get isOpen() {
         return this._isOpen;
-    }
-    get keyType() {
-        return this._keyType;
     }
     put(key, value) {
         throw new Error("Method not implemented.");
@@ -34,61 +24,74 @@ class Cursor {
     del() {
         throw new Error("Method not implemented.");
     }
-    decodeKey(keyBuf) {
-        if (this.keyType === "Buffer")
-            return keyBuf;
-        if (this.keyType === "string")
-            return keyBuf.toString();
-        if (this.keyType === "number")
-            return Number(keyBuf.readBigUInt64BE());
-        throw new Error(`Unknown keyType: ${this.keyType}`);
-    }
     key() {
         this.assertOpen();
         const result = binding_1.lmdb.cursor_get({
             cursorp: this._cursorp,
             op: constants_1.CursorOp.GET_CURRENT,
-            returnKey: true,
+            includeKey: true,
         });
         if (!result || !result.key)
             throw new Error(notFound);
-        return this.decodeKey(result.key);
+        return this.db.decodeKey(result.key);
+    }
+    keyBuffer() {
+        this.assertOpen();
+        const result = binding_1.lmdb.cursor_get({
+            cursorp: this._cursorp,
+            op: constants_1.CursorOp.GET_CURRENT,
+            includeKey: true,
+        });
+        if (!result || !result.key)
+            throw new Error(notFound);
+        return result.key;
     }
     value(zeroCopy = false) {
         this.assertOpen();
         const result = binding_1.lmdb.cursor_get({
             cursorp: this.cursorp,
             op: constants_1.CursorOp.GET_CURRENT,
-            returnValue: true,
+            includeValue: true,
             zeroCopy,
         });
         if (!result?.value)
             throw new Error(notFound);
         return result.value;
     }
+    /** @returns current value as string */
     asString() {
         return this.value().toString();
     }
+    /** @returns current value as number */
     asNumber() {
         return this.value().readDoubleBE();
     }
+    /** @returns current value as boolean */
     asBoolean() {
         return this.value().readUInt8() ? true : false;
     }
-    item(zeroCopy = false) {
+    /** @returns current key (as Buffer) and value (as Buffer) */
+    rawItem(includeKey = true, includeValue = true, zeroCopy = false) {
         this.assertOpen();
         const result = binding_1.lmdb.cursor_get({
             cursorp: this.cursorp,
             op: constants_1.CursorOp.GET_CURRENT,
-            returnKey: true,
-            returnValue: true,
+            includeKey,
+            includeValue,
             zeroCopy,
         });
         if (!result)
             throw new Error(notFound);
         return {
-            key: result.key ? this.decodeKey(result.key) : undefined,
-            value: result.value || undefined,
+            key: result.key,
+            value: result.value,
+        };
+    }
+    item(includeValue = true, zeroCopy = false) {
+        const bufItem = this.rawItem(includeValue, zeroCopy);
+        return {
+            key: bufItem.key ? this.db.decodeKey(bufItem.key) : undefined,
+            value: bufItem.value,
         };
     }
     stringItem() {
@@ -163,7 +166,7 @@ class Cursor {
         const result = binding_1.lmdb.cursor_get({
             cursorp: this.cursorp,
             op: constants_1.CursorOp.SET_KEY,
-            key,
+            key: this.db.encodeKey(key),
         });
         if (!result)
             return false;
@@ -175,7 +178,7 @@ class Cursor {
         const result = binding_1.lmdb.cursor_get({
             cursorp: this.cursorp,
             op: constants_1.CursorOp.SET_RANGE,
-            key,
+            key: this.db.encodeKey(key),
         });
         if (!result)
             return false;
@@ -187,7 +190,8 @@ class Cursor {
             throw new Error("Cursor is already closed");
     }
     close() {
-        this.assertOpen();
+        if (!this.isOpen)
+            return;
         binding_1.lmdb.cursor_close(this.cursorp);
         this._isOpen = false;
     }
@@ -206,17 +210,22 @@ async function main() {
     const db = env.openDB(null);
     const txn = env.beginTxn();
     db.clear(txn);
-    const txn2 = env.beginTxn(false);
-    console.log({ a: db.getString("a", txn2), txn2: txn2.txnp });
-    const txn3 = env.beginTxn(false);
-    console.log({ b: db.getString("b", txn3), txn3: txn3.txnp });
-    const txn4 = env.beginTxn(false);
-    console.log({ c: db.getString("c", txn4), txn4: txn4.txnp });
-    console.log(env.readerList().join());
+    db.put("a", "apple sunday", txn);
+    db.put("b", "banana sunday", txn);
+    db.put("c", "cherry sunday", txn);
+    db.put("d", "durian sunday", txn);
+    db.put("e", "enchilada sunday", txn);
+    db.put("f", "faux gras sunday", txn);
+    const cursor = db.cursor(txn);
+    while (cursor.next()) {
+        const item = cursor.stringItem();
+        console.log({
+            m: "cursor.next()",
+            key: item.key,
+            value: item.value,
+        });
+    }
     txn.commit();
-    txn2.abort();
-    txn3.abort();
-    txn4.abort();
     db.close();
     env.close();
 }
