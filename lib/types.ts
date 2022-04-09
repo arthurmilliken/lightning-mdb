@@ -78,10 +78,14 @@ export interface DbStat {
   entries: number /** Number of data items */;
 }
 
-export interface DbItem<K extends Key = string, V extends Value = string> {
+export interface CursorItem<K extends Key = string, V extends Value = string> {
   key?: K;
   value?: V;
 }
+
+export type DbItem<K extends Key = string, V extends Value = string> = Required<
+  CursorItem<K, V>
+>;
 
 export interface Query<K extends Key = string> {
   start?: K;
@@ -105,7 +109,7 @@ export interface PutFlags {
   /** append the given key/data pair to the end of the database.
    * This option allows fast bulk loading when keys are already known to
    * be in the correct order. Loading unsorted keys with this flag will
-   * throw an error. */
+   * throw MDB_KEYEXIST. */
   append?: boolean;
   /** enter the new key/data pair only if the key does not already appear
    * in the database. The function will throw if the key already appears
@@ -114,10 +118,7 @@ export interface PutFlags {
 }
 
 export interface CursorPutFlags extends PutFlags {
-  // noOverwrite
-  // reserve
   current?: boolean;
-  multiple?: boolean;
 }
 
 export interface MultimapOptions extends DbOptions {
@@ -129,7 +130,7 @@ export interface MultimapOptions extends DbOptions {
   reverseDup?: boolean;
 }
 
-export interface MultimapPutFlags extends PutFlags {
+export interface MultimapPutFlags extends CursorPutFlags {
   /** For put: don't write if the key and data pair already exist.<br>
    * For mdb_cursor_del: remove all duplicate data items. */
   noDupData?: boolean;
@@ -151,7 +152,7 @@ export interface Multimap<K extends Key = string, V extends Key = string>
   putAsync(key: K, value: V, flags?: MultimapPutFlags): Promise<Buffer | null>;
   delDup(key: K, value: V, txn: Transaction): void;
   delDupAsync(key: K, value: V): Promise<void>;
-  compareData(a: V, b: V): number;
+  compareValues(a: V, b: V): number;
 }
 
 export interface MultimapCursor<K extends Key = string, V extends Key = string>

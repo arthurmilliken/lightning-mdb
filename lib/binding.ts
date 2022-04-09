@@ -1,5 +1,5 @@
 import { CursorOp } from "./constants";
-import { DbItem, DbStat, EnvInfo, Version } from "./types";
+import { CursorItem, DbStat, EnvInfo, Version } from "./types";
 
 interface LMDB {
   version(): Version;
@@ -71,7 +71,7 @@ interface LMDB {
     includeKey?: boolean;
     includeValue?: boolean;
     zeroCopy?: boolean;
-  }): DbItem<Buffer, Buffer> | null;
+  }): CursorItem<Buffer, Buffer> | null;
   cursor_put(params: {
     cursorp: bigint;
     key: Buffer;
@@ -79,9 +79,9 @@ interface LMDB {
     flags?: number;
   }): void;
   cursor_reserve(params: {
-    cursor: bigint;
+    cursorp: bigint;
     key: Buffer;
-    value: Buffer;
+    size: number;
     flags?: number;
   }): Buffer;
   cursor_del(cursorp: bigint, flags?: number): void;

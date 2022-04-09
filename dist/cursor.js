@@ -3,14 +3,22 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.Cursor = void 0;
 const binding_1 = require("./binding");
 const constants_1 = require("./constants");
+const database_1 = require("./database");
 const environment_1 = require("./environment");
+const transaction_1 = require("./transaction");
 const notFound = "Item not found";
 class Cursor {
-    constructor(txn, db) {
+    constructor(db, txn) {
         this._isOpen = true;
-        this._cursorp = binding_1.lmdb.cursor_open(txn.txnp, db.dbi);
-        this.txn = txn;
+        this.ownsTxn = false;
         this.db = db;
+        if (!txn) {
+            this.txn = new transaction_1.Transaction(db.envp, true);
+            this.ownsTxn = true;
+        }
+        else
+            this.txn = txn;
+        this._cursorp = binding_1.lmdb.cursor_open(this.txn.txnp, db.dbi);
     }
     get cursorp() {
         return this._cursorp;
@@ -18,22 +26,39 @@ class Cursor {
     get isOpen() {
         return this._isOpen;
     }
-    put(key, value) {
-        throw new Error("Method not implemented.");
-    }
-    del() {
-        throw new Error("Method not implemented.");
-    }
-    key() {
+    /** Store `value` at `key`, and move the cursor to the position of the
+     * inserted record */
+    put(key, value, flags) {
         this.assertOpen();
-        const result = binding_1.lmdb.cursor_get({
-            cursorp: this._cursorp,
-            op: constants_1.CursorOp.GET_CURRENT,
-            includeKey: true,
+        const _flags = (flags?.append ? constants_1.PutFlag.APPEND : 0) +
+            (flags?.noOverwrite ? constants_1.PutFlag.NOOVERWRITE : 0) +
+            (flags?.current ? constants_1.PutFlag.CURRENT : 0);
+        binding_1.lmdb.cursor_put({
+            cursorp: this.cursorp,
+            key: this.db.encodeKey(key),
+            value: this.db.encodeValue(value),
+            flags: _flags,
         });
-        if (!result || !result.key)
-            throw new Error(notFound);
-        return this.db.decodeKey(result.key);
+    }
+    /** Reserve space at `key`, move cursor to position of `key`, and return
+     * an initialized Buffer which the caller can fill in before the end of
+     * the transaction */
+    reserve(key, size, flags) {
+        this.assertOpen();
+        const _flags = (flags?.append ? constants_1.PutFlag.APPEND : 0) +
+            (flags?.noOverwrite ? constants_1.PutFlag.NOOVERWRITE : 0) +
+            (flags?.current ? constants_1.PutFlag.CURRENT : 0);
+        return binding_1.lmdb.cursor_reserve({
+            cursorp: this.cursorp,
+            key: this.db.encodeKey(key),
+            size,
+            flags: _flags,
+        });
+    }
+    /** Remove database entry (key + value) at current cursor position */
+    del() {
+        this.assertOpen();
+        binding_1.lmdb.cursor_del(this._cursorp);
     }
     keyBuffer() {
         this.assertOpen();
@@ -45,6 +70,9 @@ class Cursor {
         if (!result || !result.key)
             throw new Error(notFound);
         return result.key;
+    }
+    key() {
+        return this.db.decodeKey(this.keyBuffer());
     }
     value(zeroCopy = false) {
         this.assertOpen();
@@ -193,6 +221,9 @@ class Cursor {
         if (!this.isOpen)
             return;
         binding_1.lmdb.cursor_close(this.cursorp);
+        if (this.ownsTxn && this.txn.isOpen) {
+            this.txn.abort();
+        }
         this._isOpen = false;
     }
     renew(txn) {
@@ -202,6 +233,141 @@ class Cursor {
         binding_1.lmdb.cursor_renew(txn.txnp, this.cursorp);
         this._isOpen = true;
     }
+    /** @returns an iterator over items (each item as DbItem<K, Buffer>) */
+    *getCursorItems(q, includeKey = true, includeValue = true) {
+        // Set up navigation functions, based on q.reverse
+        let first = q?.reverse ? this.last.bind(this) : this.first.bind(this);
+        let next = q?.reverse ? this.prev.bind(this) : this.next.bind(this);
+        let compare = (a, b) => {
+            return this.db.compareBuffers(a, b, this.txn) * (q?.reverse ? -1 : 1);
+        };
+        let find = (start) => {
+            if (q?.reverse) {
+                if (!this.find(start))
+                    return this.prev();
+                else
+                    return true;
+            }
+            else {
+                return this.findNext(start);
+            }
+        };
+        // Start iteration
+        let found = 0;
+        const endBuf = q?.end ? this.db.encodeKey(q.end) : undefined;
+        if (q?.start) {
+            if (!find(q.start)) {
+                return;
+            }
+        }
+        else {
+            if (!first())
+                return;
+        }
+        if (q?.offset) {
+            if (!next(q.offset - 1))
+                return;
+        }
+        const rawItem = this.rawItem(endBuf ? true : includeKey, includeValue, q?.zeroCopy);
+        if (endBuf && compare(rawItem.key, endBuf) > 0)
+            return;
+        found++;
+        yield {
+            key: includeKey && rawItem.key ? this.db.decodeKey(rawItem.key) : undefined,
+            value: rawItem.value,
+        };
+        // Iterate over remainder
+        while (next()) {
+            if (q?.limit && ++found > q.limit)
+                return;
+            const rawItem = this.rawItem(endBuf ? true : includeKey, includeValue, q?.zeroCopy);
+            if (endBuf && compare(rawItem.key, endBuf) > 0)
+                return;
+            yield {
+                key: includeKey && rawItem.key
+                    ? this.db.decodeKey(rawItem.key)
+                    : undefined,
+                value: rawItem.value,
+            };
+        }
+    }
+    /** @returns an iterator over keys */
+    *getItems(q) {
+        for (const item of this.getCursorItems(q, true, true)) {
+            if (!item.key || !item.value)
+                break;
+            yield item;
+        }
+    }
+    /** @returns an iterator over keys */
+    *getKeys(q) {
+        for (const item of this.getCursorItems(q, true, false)) {
+            if (!item.key)
+                break;
+            yield item.key;
+        }
+    }
+    /** @returns an iterator over values (each value as Buffer) */
+    *getValues(q) {
+        for (const item of this.getCursorItems(q, false, true)) {
+            if (!item.value)
+                break;
+            yield item.value;
+        }
+    }
+    /** @returns an iterator over values (each value as string) */
+    *getStrings(q) {
+        for (const value of this.getValues(q)) {
+            yield value.toString();
+        }
+    }
+    /** @returns an iterator over values (each value as number) */
+    *getNumbers(q) {
+        for (const value of this.getValues(q)) {
+            yield value.readDoubleBE();
+        }
+    }
+    /** @returns an iterator over values (each value as boolean) */
+    *getBooleans(q) {
+        for (const value of this.getValues(q)) {
+            yield database_1.bufReadBoolean(value);
+        }
+    }
+    /** @returns an iterator over items (each item as DbItem<K, string>) */
+    *getStringItems(q) {
+        for (const item of this.getItems(q)) {
+            yield {
+                key: item.key,
+                value: item.value?.toString(),
+            };
+        }
+    }
+    /** @returns an iterator over items (each item as DbItem<K, number>) */
+    *getNumberItems(q) {
+        for (const item of this.getItems(q)) {
+            yield {
+                key: item.key,
+                value: item.value?.readDoubleBE(),
+            };
+        }
+    }
+    /** @returns an iterator over items (each item as DbItem<K, boolean>) */
+    *getBooleanItems(q) {
+        for (const item of this.getItems(q)) {
+            yield {
+                key: item.key,
+                value: item.value ? database_1.bufReadBoolean(item.value) : false,
+            };
+        }
+    }
+    /** @returns a count of items matching the given query */
+    getCount(q) {
+        let count = 0;
+        for (const item of this.getCursorItems(q, false, false)) {
+            count++;
+        }
+        return count;
+    }
 }
 exports.Cursor = Cursor;
 async function main() {
@@ -210,21 +376,30 @@ async function main() {
     const db = env.openDB(null);
     const txn = env.beginTxn();
     db.clear(txn);
-    db.put("a", "apple sunday", txn);
-    db.put("b", "banana sunday", txn);
-    db.put("c", "cherry sunday", txn);
-    db.put("d", "durian sunday", txn);
-    db.put("e", "enchilada sunday", txn);
-    db.put("f", "faux gras sunday", txn);
-    const cursor = db.cursor(txn);
-    while (cursor.next()) {
-        const item = cursor.stringItem();
-        console.log({
-            m: "cursor.next()",
-            key: item.key,
-            value: item.value,
-        });
+    db.put("a", "alpha", txn);
+    db.put("b", "beta", txn);
+    db.put("c", "charlie", txn);
+    db.put("d", "delta", txn);
+    db.put("e", "echo", txn);
+    db.put("f", "foxtrot", txn);
+    const cursor = db.openCursor(txn);
+    for (const item of cursor.getStringItems()) {
+        const value = `${item.value} foo`;
+        const buf = cursor.reserve(item.key, value.length);
+        buf.write(value);
     }
+    for (const item of cursor.getStringItems()) {
+        console.log(item);
+    }
+    console.log({ count: cursor.getCount() });
+    for (const _item of cursor.getCursorItems({ start: "c", limit: 3 })) {
+        cursor.del();
+    }
+    for (const item of cursor.getStringItems()) {
+        console.log(item);
+    }
+    console.log({ count: cursor.getCount() });
+    cursor.close();
     txn.commit();
     db.close();
     env.close();

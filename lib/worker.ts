@@ -1,79 +1,79 @@
 import { Worker, isMainThread, parentPort, workerData } from "worker_threads";
-import { setTimeout } from "timers/promises";
 import { Environment, openEnv } from "./environment";
-import { Database, detachBuffer } from "./database";
+import { Database } from "./database";
 import os from "os";
 
 const ITERATIONS = 100000;
+
+const encoding = "utf8";
 
 async function main() {
   const start = Date.now();
   const env = await openEnv(".testdb", { mapSize: 1024 * 1024 * 1024 });
   const db = env.openDB(null);
-  // const workers: Worker[] = [];
-  // const cpus = os.cpus().length;
-  // for (let i = 0; i < cpus; i++) {
-  //   workers.push(
-  //     new Worker(__filename, {
-  //       workerData: {
-  //         env: env.serialize(),
-  //         db: db.serialize(),
-  //         start,
-  //         i,
-  //       },
-  //     })
-  //   );
-  // }
   const txn = env.beginTxn();
   db.clear(txn);
-  const buf = Buffer.alloc(1024 * Math.pow(2, 3), "-", "utf16le"); // 8KiB
-  buf.write("apple ", "utf16le");
+  const buf = Buffer.alloc(1024 * Math.pow(2, 3), "-", encoding); // 8KiB
+  buf.write("apple ", encoding);
   db.put("a", buf, txn);
-  buf.write("banana ", "utf16le");
+  buf.write("banana ", encoding);
   db.put("b", buf, txn);
-  buf.write("cherry ", "utf16le");
+  buf.write("cherry ", encoding);
   db.put("c", buf, txn);
   txn.commit();
-  await setTimeout(1000 - (Date.now() - start));
-  console.log({ ts: Date.now(), m: "main: after sleep." });
-  let totalBytes = 0;
+
   const s = process.hrtime();
-  for (let i = 0; i < ITERATIONS; i++) {
-    const txn = env.beginTxn(true);
-    const a = db.getString("a", txn);
-    const b = db.getString("b", txn);
-    const c = db.getString("c", txn);
-    totalBytes += (a?.length || 0) + (b?.length || 0) + (c?.length || 0);
-    if (i < 1) {
-      console.log({
-        m: "main",
-        a: a?.slice(0, 32),
-        alen: a?.length,
-        b: b?.slice(0, 32),
-        blen: b?.length,
-        c: c?.slice(0, 32),
-        clen: c?.length,
-      });
-    }
-    // a ? detachBuffer(a) : {};
-    // b ? detachBuffer(b) : {};
-    // c ? detachBuffer(c) : {};
-    txn.abort();
+  const workers: Worker[] = [];
+  const cpus = os.cpus().length;
+  for (let i = 0; i < cpus; i++) {
+    workers.push(
+      new Worker(__filename, {
+        workerData: {
+          env: env.serialize(),
+          db: db.serialize(),
+          start,
+          i,
+        },
+      })
+    );
   }
-  const d = process.hrtime(s);
-  const micros = (d[0] * 1000000000 + d[1]) / (ITERATIONS * 1000);
+
+  let totalLength = 0;
+  for (let i = 0; i < ITERATIONS; i++) {
+    const cursor = db.openCursor();
+    for (const value of cursor.getStrings()) {
+      totalLength += value.length;
+    }
+    cursor.close();
+  }
+  const promises = [];
+  for (const worker of workers) {
+    promises.push(
+      new Promise((resolve, reject) => {
+        worker
+          .on("message", (e) => {
+            resolve(e);
+            worker.terminate();
+          })
+          .on("error", reject);
+      })
+    );
+  }
+  const results = await Promise.all(promises);
+  const duration = process.hrtime(s);
+  let micros =
+    (duration[0] * 1000000000 + duration[1]) /
+    (ITERATIONS * (workers.length + 1) * 1000 * 3);
+  micros = Math.round(micros * 1000) / 1000;
   console.log({
-    ts: Date.now(),
-    d,
-    i: ITERATIONS,
-    micros,
-    buf: buf.byteLength,
-    totalBytes,
+    ts: new Date().toISOString(),
+    duration: duration,
+    operations: ITERATIONS * (workers.length + 1) * 3,
+    micros_per_op: micros,
+    buf_size: buf.byteLength,
+    total_chars: totalLength * (workers.length + 1),
     m: "main: done.",
   });
-
-  await setTimeout(500);
-  // for (const worker of workers) worker.terminate();
 }
 
 async function work() {
@@ -81,66 +81,21 @@ async function work() {
   const env = Environment.deserialize(workerData.env);
   const db = Database.deserialize(workerData.db);
   const idx = workerData.i;
-  await setTimeout(1000 - (Date.now() - start));
-  console.log({ ts: Date.now(), m: `(w${idx}): after sleep.` });
   const s = process.hrtime();
+  let totalLength = 0;
   for (let i = 0; i < ITERATIONS; i++) {
-    const txn = env.beginTxn(true);
-    const a = db.getString("a", txn);
-    const b = db.getString("b", txn);
-    const c = db.getString("c", txn);
-    if (i < 1) {
-      console.log({
-        m: "work",
-        a: a?.toString(),
-        b: b?.toString(),
-        c: c?.toString(),
-      });
+    const cursor = db.openCursor();
+    for (const value of cursor.getStrings()) {
+      totalLength += value.length;
     }
-    txn.abort();
+    cursor.close();
   }
   const d = process.hrtime(s);
-  console.log({ ts: Date.now(), d, i: ITERATIONS, m: `(w${idx}): done.` });
+  parentPort?.postMessage({ idx, ITERATIONS, d, totalLength });
 }
 
 if (isMainThread) {
-  const iterations = 100000;
-  const encoding = "utf16le";
-  const buf = Buffer.alloc(1024 * Math.pow(2, 7), "-", encoding); // 64KiB
-  buf.write("Hello, everybody, this is my BOOM stick!", encoding);
-  const str = buf.toString(encoding);
-  let start = process.hrtime();
-  let encoded = 0;
-  for (let i = 0; i < iterations; i++) {
-    encoded += Buffer.from(str, encoding).byteLength;
-  }
-  let duration = process.hrtime(start);
-  let micros = (duration[0] * 1000000000 + duration[1]) / iterations / 1000;
-  console.log({
-    encoding,
-    iterations,
-    encoded,
-    duration,
-    micros,
-    bufSize: buf.byteLength,
-  });
-  start = process.hrtime();
-  let decoded = 0;
-  for (let i = 0; i < iterations; i++) {
-    decoded += buf.toString(encoding).length;
-  }
-  duration = process.hrtime(start);
-  micros = (duration[0] * 1000000000 + duration[1]) / iterations / 1000;
-  console.log({
-    encoding,
-    iterations,
-    decoded,
-    duration,
-    micros,
-    bufSize: buf.byteLength,
-  });
-
-  // main();
+  main();
 } else {
-  // work();
+  work();
 }

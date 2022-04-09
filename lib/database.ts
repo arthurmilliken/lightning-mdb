@@ -1,20 +1,17 @@
 import { lmdb } from "./binding";
 import { DbFlag, PutFlag } from "./constants";
 import { Transaction } from "./transaction";
-import {
-  Key,
-  KeyType,
-  Value,
-  PutFlags,
-  DbOptions,
-  DbStat,
-  Query,
-  DbItem,
-} from "./types";
+import { Key, KeyType, Value, PutFlags, DbOptions, DbStat } from "./types";
 import { Buffer } from "buffer";
 import { isMainThread } from "worker_threads";
 import { openEnv } from "./environment";
 import { Cursor } from "./cursor";
+
+interface SerializedDB {
+  envp: bigint /** Address of MDB_env pointer */;
+  dbi: number /** MDB_dbi handle */;
+  keyType: KeyType /** Type for database keys */;
+}
 
 export class Database<K extends Key = string> {
   /**
@@ -27,16 +24,32 @@ export class Database<K extends Key = string> {
   }
 
   protected _isOpen = false;
+  get isOpen(): boolean {
+    return this._isOpen;
+  }
+
   protected _keyType: KeyType;
-  _envp: bigint;
-  _dbi: number;
+  /** Data type for stored keys */
+  get keyType(): KeyType {
+    return this._keyType;
+  }
+
+  protected _envp: bigint;
+  get envp() {
+    return this._envp;
+  }
+
+  protected _dbi: number;
+  get dbi() {
+    return this._dbi;
+  }
 
   /**
-   * Opens a Database in the given environment
-   * @param envp
-   * @param name
+   * Open a Database in the given environment
+   * @param envp address of Environment pointer
+   * @param name name of Database, or null for default (root) database
+   * @param txn an open writable transaction
    * @param options
-   * @param txn
    */
   constructor(
     envp: bigint,
@@ -45,7 +58,7 @@ export class Database<K extends Key = string> {
     options?: DbOptions
   );
   /**
-   * Creates a Database from a serialized representation
+   * Open a Database from a serialized representation
    * @param serialized
    */
   constructor(serialized: SerializedDB);
@@ -75,19 +88,6 @@ export class Database<K extends Key = string> {
       this._keyType = serialized.keyType;
     }
     this._isOpen = true;
-  }
-  get envp() {
-    return this._envp;
-  }
-  get dbi() {
-    return this._dbi;
-  }
-  get isOpen(): boolean {
-    return this._isOpen;
-  }
-  /** Data type for stored keys */
-  get keyType(): KeyType {
-    return this._keyType;
   }
 
   /** Create serialization token for use with Worker Thread */
@@ -262,11 +262,11 @@ export class Database<K extends Key = string> {
    * @param txn an optional transaction context
    * @returns < 0 if a < b, 0 if a == b, > 0 if a > b
    */
-  compare(a: K, b: K, txn?: Transaction): number {
-    return this.compareBuffer(this.encodeKey(a), this.encodeKey(b), txn);
+  compareKeys(a: K, b: K, txn?: Transaction): number {
+    return this.compareBuffers(this.encodeKey(a), this.encodeKey(b), txn);
   }
 
-  compareBuffer(a: Buffer, b: Buffer, txn?: Transaction): number {
+  compareBuffers(a: Buffer, b: Buffer, txn?: Transaction): number {
     this.assertOpen();
     let useTxn = txn;
     if (!useTxn) useTxn = new Transaction(this.envp, true);
@@ -316,169 +316,8 @@ export class Database<K extends Key = string> {
   }
 
   /** @returns a cursor for this database, which the caller can use to navigate keys */
-  cursor(txn?: Transaction): Cursor<K> {
-    return this.useTransaction((useTxn) => {
-      return new Cursor<K>(useTxn, this);
-    }, txn);
-  }
-
-  /** @returns an iterator over items (each item as DbItem<K, Buffer>) */
-  *getItems(
-    q?: Query<K> & { zeroCopy?: boolean },
-    txn?: Transaction,
-    includeKey = true,
-    includeValue = true
-  ): IterableIterator<DbItem<K, Buffer>> {
-    // Set up transaction
-    let useTxn = txn;
-    if (!useTxn) useTxn = new Transaction(this._envp, true);
-    const cursor = new Cursor<K>(useTxn, this);
-
-    // Set up navigation functions, based on q.reverse
-    let next = q?.reverse ? cursor.prev.bind(cursor) : cursor.next.bind(cursor);
-    let compare = (a: Buffer, b: Buffer) => {
-      return this.compareBuffer(a, b, useTxn) * (q?.reverse ? -1 : 1);
-    };
-    let find = (start: K): boolean => {
-      if (q?.reverse) {
-        if (!cursor.find(start)) return cursor.prev();
-        else return true;
-      } else {
-        return cursor.findNext(start);
-      }
-    };
-    const exit = () => {
-      cursor.close();
-      if (!txn) useTxn?.abort();
-    };
-
-    // Start iteration
-    let found = 0;
-    const endBuf = q?.end ? this.encodeKey(q.end) : undefined;
-    if (q?.start) {
-      if (!find(q.start)) {
-        return exit();
-      }
-    } else if (!next()) return exit;
-    if (q?.offset) {
-      if (!next(q.offset - 1)) return exit();
-    }
-    const rawItem = cursor.rawItem(
-      endBuf ? true : includeKey,
-      includeValue,
-      q?.zeroCopy
-    );
-    if (endBuf && compare(<Buffer>rawItem.key, endBuf) > 0) return exit();
-    found++;
-    yield {
-      key: includeKey && rawItem.key ? this.decodeKey(rawItem.key) : undefined,
-      value: rawItem.value,
-    };
-
-    // Iterate over remainder
-    while (next()) {
-      if (q?.limit && ++found > q.limit) return exit();
-      const rawItem = cursor.rawItem(
-        endBuf ? true : includeKey,
-        includeValue,
-        q?.zeroCopy
-      );
-      if (endBuf && compare(<Buffer>rawItem.key, endBuf) > 0) return exit();
-      yield {
-        key:
-          includeKey && rawItem.key ? this.decodeKey(rawItem.key) : undefined,
-        value: rawItem.value,
-      };
-    }
-    exit();
-  }
-
-  /** @returns an iterator over keys */
-  *getKeys(q?: Query<K>, txn?: Transaction): IterableIterator<K> {
-    for (const item of this.getItems(q, txn, true, false)) {
-      if (!item.key) break;
-      yield item.key;
-    }
-  }
-
-  /** @returns an iterator over values (each value as Buffer) */
-  *getValues(
-    q?: Query<K> & { zeroCopy?: boolean },
-    txn?: Transaction
-  ): IterableIterator<Buffer> {
-    for (const item of this.getItems(q, txn, false, true)) {
-      if (!item.value) break;
-      yield item.value;
-    }
-  }
-
-  /** @returns an iterator over values (each value as string) */
-  *getStrings(q?: Query<K>, txn?: Transaction): IterableIterator<string> {
-    for (const value of this.getValues(q, txn)) {
-      yield value.toString();
-    }
-  }
-  /** @returns an iterator over values (each value as number) */
-  *getNumbers(q?: Query<K>, txn?: Transaction): IterableIterator<number> {
-    for (const value of this.getValues(q, txn)) {
-      yield value.readDoubleBE();
-    }
-  }
-  /** @returns an iterator over values (each value as boolean) */
-  *getBooleans(q?: Query<K>, txn?: Transaction): IterableIterator<boolean> {
-    for (const value of this.getValues(q, txn)) {
-      yield bufReadBoolean(value);
-    }
-  }
-
-  /** @returns an iterator over items (each item as DbItem<K, string>) */
-  *getStringItems(
-    q?: Query<K>,
-    txn?: Transaction
-  ): IterableIterator<DbItem<K, string>> {
-    for (const item of this.getItems(q, txn, true, true)) {
-      if (!(item.key || item.value)) break;
-      yield {
-        key: item.key,
-        value: item.value?.toString(),
-      };
-    }
-  }
-  /** @returns an iterator over items (each item as DbItem<K, number>) */
-  *getNumberItems(
-    q?: Query<K>,
-    txn?: Transaction
-  ): IterableIterator<DbItem<K, number>> {
-    for (const item of this.getItems(q, txn, true, true)) {
-      if (!(item.key || item.value)) break;
-      yield {
-        key: item.key,
-        value: item.value?.readDoubleBE(),
-      };
-    }
-  }
-
-  /** @returns an iterator over items (each item as DbItem<K, boolean>) */
-  *getBooleanItems(
-    q?: Query<K>,
-    txn?: Transaction
-  ): IterableIterator<DbItem<K, boolean>> {
-    for (const item of this.getItems(q, txn, true, true)) {
-      if (!(item.key || item.value)) break;
-      yield {
-        key: item.key,
-        value: item.value ? bufReadBoolean(item.value) : false,
-      };
-    }
-  }
-
-  /** @returns a count of items matching the given query */
-  getCount(q?: Omit<Query<K>, "reverse">, txn?: Transaction): number {
-    let count = 0;
-    for (const item of this.getItems(q, txn, false, false)) {
-      count++;
-    }
-    return count;
+  openCursor(txn?: Transaction): Cursor<K> {
+    return new Cursor<K>(this, txn);
   }
 
   /** Helper function for handling optional transaction argument */
@@ -533,12 +372,6 @@ export function bufReadBoolean(buf: Buffer, offset = 0): boolean {
   return buf.readUInt8(offset) ? true : false;
 }
 
-interface SerializedDB {
-  envp: bigint;
-  dbi: number;
-  keyType: KeyType;
-}
-
 async function main() {
   const env = await openEnv(".testdb");
   const db = env.openDB(null);
@@ -547,45 +380,11 @@ async function main() {
   db.put("a", "alpha", txn);
   db.put("b", "bravo", txn);
   db.put("c", "charlie", txn);
-  db.put("d", "delta", txn);
-  db.put("e", "echo", txn);
-  db.put("f", "foxtrot", txn);
-  db.put("g", "golf", txn);
+  const start = process.hrtime();
+  const c = db.getString("c", txn);
+  const diff = process.hrtime(start);
+  console.log({ c, diff });
   txn.commit();
-  const q: Query = {
-    limit: 3,
-  };
-  for (const key of db.getKeys(q)) {
-    console.log({ key });
-  }
-  for (const value of db.getStrings(q)) {
-    console.log({ value });
-  }
-  for (const item of db.getItems(q)) {
-    console.log({
-      key: item.key,
-      value: item.value?.toString(),
-    });
-  }
-
-  const txn2 = env.beginTxn();
-  db.put("x", true, txn2);
-  db.put("y", false, txn2);
-  db.put("z", true, txn2);
-  console.log(Array.from(db.getBooleanItems({ start: "x", end: "z" }, txn2)));
-  db.put("n1", 1, txn2);
-  db.put("n2", 2, txn2);
-  db.put("n3", 3, txn2);
-  console.log(Array.from(db.getNumberItems({ start: "n", limit: 3 }, txn2)));
-  let start = process.hrtime();
-  const count = db.getCount({}, txn2);
-  let diff = process.hrtime(start);
-  console.log({ count, diff });
-  start = process.hrtime();
-  const all = Array.from(db.getItems({}, txn2));
-  diff = process.hrtime(start);
-  console.log({ all, diff });
-  txn2.abort();
   db.close();
   env.close();
 }

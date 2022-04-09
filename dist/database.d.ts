@@ -1,8 +1,13 @@
 /// <reference types="node" />
 import { Transaction } from "./transaction";
-import { Key, KeyType, Value, PutFlags, DbOptions, DbStat, Query, DbItem } from "./types";
+import { Key, KeyType, Value, PutFlags, DbOptions, DbStat } from "./types";
 import { Buffer } from "buffer";
 import { Cursor } from "./cursor";
+interface SerializedDB {
+    envp: bigint /** Address of MDB_env pointer */;
+    dbi: number /** MDB_dbi handle */;
+    keyType: KeyType /** Type for database keys */;
+}
 export declare class Database<K extends Key = string> {
     /**
      * Use this method to create a Database for use in a Worker Thread
@@ -11,27 +16,27 @@ export declare class Database<K extends Key = string> {
      */
     static deserialize(serialized: SerializedDB): Database;
     protected _isOpen: boolean;
+    get isOpen(): boolean;
     protected _keyType: KeyType;
-    _envp: bigint;
-    _dbi: number;
+    /** Data type for stored keys */
+    get keyType(): KeyType;
+    protected _envp: bigint;
+    get envp(): bigint;
+    protected _dbi: number;
+    get dbi(): number;
     /**
-     * Opens a Database in the given environment
-     * @param envp
-     * @param name
+     * Open a Database in the given environment
+     * @param envp address of Environment pointer
+     * @param name name of Database, or null for default (root) database
+     * @param txn an open writable transaction
      * @param options
-     * @param txn
      */
     constructor(envp: bigint, name: string | null, txn: Transaction, options?: DbOptions);
     /**
-     * Creates a Database from a serialized representation
+     * Open a Database from a serialized representation
      * @param serialized
      */
     constructor(serialized: SerializedDB);
-    get envp(): bigint;
-    get dbi(): number;
-    get isOpen(): boolean;
-    /** Data type for stored keys */
-    get keyType(): KeyType;
     /** Create serialization token for use with Worker Thread */
     serialize(): SerializedDB;
     stat(txn?: Transaction): DbStat;
@@ -100,37 +105,13 @@ export declare class Database<K extends Key = string> {
      * @param txn an optional transaction context
      * @returns < 0 if a < b, 0 if a == b, > 0 if a > b
      */
-    compare(a: K, b: K, txn?: Transaction): number;
-    compareBuffer(a: Buffer, b: Buffer, txn?: Transaction): number;
+    compareKeys(a: K, b: K, txn?: Transaction): number;
+    compareBuffers(a: Buffer, b: Buffer, txn?: Transaction): number;
     encodeKey(key: Key): Buffer;
     decodeKey(keyBuf: Buffer): K;
     encodeValue(value: Value): Buffer;
     /** @returns a cursor for this database, which the caller can use to navigate keys */
-    cursor(txn?: Transaction): Cursor<K>;
-    /** @returns an iterator over items (each item as DbItem<K, Buffer>) */
-    getItems(q?: Query<K> & {
-        zeroCopy?: boolean;
-    }, txn?: Transaction, includeKey?: boolean, includeValue?: boolean): IterableIterator<DbItem<K, Buffer>>;
-    /** @returns an iterator over keys */
-    getKeys(q?: Query<K>, txn?: Transaction): IterableIterator<K>;
-    /** @returns an iterator over values (each value as Buffer) */
-    getValues(q?: Query<K> & {
-        zeroCopy?: boolean;
-    }, txn?: Transaction): IterableIterator<Buffer>;
-    /** @returns an iterator over values (each value as string) */
-    getStrings(q?: Query<K>, txn?: Transaction): IterableIterator<string>;
-    /** @returns an iterator over values (each value as number) */
-    getNumbers(q?: Query<K>, txn?: Transaction): IterableIterator<number>;
-    /** @returns an iterator over values (each value as boolean) */
-    getBooleans(q?: Query<K>, txn?: Transaction): IterableIterator<boolean>;
-    /** @returns an iterator over items (each item as DbItem<K, string>) */
-    getStringItems(q?: Query<K>, txn?: Transaction): IterableIterator<DbItem<K, string>>;
-    /** @returns an iterator over items (each item as DbItem<K, number>) */
-    getNumberItems(q?: Query<K>, txn?: Transaction): IterableIterator<DbItem<K, number>>;
-    /** @returns an iterator over items (each item as DbItem<K, boolean>) */
-    getBooleanItems(q?: Query<K>, txn?: Transaction): IterableIterator<DbItem<K, boolean>>;
-    /** @returns a count of items matching the given query */
-    getCount(q?: Omit<Query<K>, "reverse">, txn?: Transaction): number;
+    openCursor(txn?: Transaction): Cursor<K>;
     /** Helper function for handling optional transaction argument */
     protected useTransaction<T>(callback: (useTxn: Transaction) => T, txn: Transaction | undefined): T;
     protected assertOpen(): void;
@@ -140,9 +121,4 @@ export declare function detachBuffer(buf: Buffer): void;
 export declare function assertUSafe(num: number): void;
 export declare function bufWriteBoolean(buf: Buffer, val: boolean, offset?: number): void;
 export declare function bufReadBoolean(buf: Buffer, offset?: number): boolean;
-interface SerializedDB {
-    envp: bigint;
-    dbi: number;
-    keyType: KeyType;
-}
 export {};

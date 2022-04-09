@@ -1,4 +1,3 @@
-import { buffer } from "stream/consumers";
 import { lmdb } from "./binding";
 import { CursorOp, PutFlag } from "./constants";
 

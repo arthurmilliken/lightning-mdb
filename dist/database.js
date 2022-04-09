@@ -40,18 +40,18 @@ class Database {
     static deserialize(serialized) {
         return new Database(serialized);
     }
-    get envp() {
-        return this._envp;
-    }
-    get dbi() {
-        return this._dbi;
-    }
     get isOpen() {
         return this._isOpen;
     }
     /** Data type for stored keys */
     get keyType() {
         return this._keyType;
+    }
+    get envp() {
+        return this._envp;
+    }
+    get dbi() {
+        return this._dbi;
     }
     /** Create serialization token for use with Worker Thread */
     serialize() {
@@ -207,10 +207,10 @@ class Database {
      * @param txn an optional transaction context
      * @returns < 0 if a < b, 0 if a == b, > 0 if a > b
      */
-    compare(a, b, txn) {
-        return this.compareBuffer(this.encodeKey(a), this.encodeKey(b), txn);
+    compareKeys(a, b, txn) {
+        return this.compareBuffers(this.encodeKey(a), this.encodeKey(b), txn);
     }
-    compareBuffer(a, b, txn) {
+    compareBuffers(a, b, txn) {
         this.assertOpen();
         let useTxn = txn;
         if (!useTxn)
@@ -263,149 +263,8 @@ class Database {
         throw new TypeError(`Invalid value: ${value}`);
     }
     /** @returns a cursor for this database, which the caller can use to navigate keys */
-    cursor(txn) {
-        return this.useTransaction((useTxn) => {
-            return new cursor_1.Cursor(useTxn, this);
-        }, txn);
-    }
-    /** @returns an iterator over items (each item as DbItem<K, Buffer>) */
-    *getItems(q, txn, includeKey = true, includeValue = true) {
-        // Set up transaction
-        let useTxn = txn;
-        if (!useTxn)
-            useTxn = new transaction_1.Transaction(this._envp, true);
-        const cursor = new cursor_1.Cursor(useTxn, this);
-        // Set up navigation functions, based on q.reverse
-        let next = q?.reverse ? cursor.prev.bind(cursor) : cursor.next.bind(cursor);
-        let compare = (a, b) => {
-            return this.compareBuffer(a, b, useTxn) * (q?.reverse ? -1 : 1);
-        };
-        let find = (start) => {
-            if (q?.reverse) {
-                if (!cursor.find(start))
-                    return cursor.prev();
-                else
-                    return true;
-            }
-            else {
-                return cursor.findNext(start);
-            }
-        };
-        const exit = () => {
-            cursor.close();
-            if (!txn)
-                useTxn?.abort();
-        };
-        // Start iteration
-        let found = 0;
-        const endBuf = q?.end ? this.encodeKey(q.end) : undefined;
-        if (q?.start) {
-            if (!find(q.start)) {
-                return exit();
-            }
-        }
-        else if (!next())
-            return exit;
-        if (q?.offset) {
-            if (!next(q.offset - 1))
-                return exit();
-        }
-        const rawItem = cursor.rawItem(endBuf ? true : includeKey, includeValue, q?.zeroCopy);
-        if (endBuf && compare(rawItem.key, endBuf) > 0)
-            return exit();
-        found++;
-        yield {
-            key: includeKey && rawItem.key ? this.decodeKey(rawItem.key) : undefined,
-            value: rawItem.value,
-        };
-        // Iterate over remainder
-        while (next()) {
-            if (q?.limit && ++found > q.limit)
-                return exit();
-            const rawItem = cursor.rawItem(endBuf ? true : includeKey, includeValue, q?.zeroCopy);
-            if (endBuf && compare(rawItem.key, endBuf) > 0)
-                return exit();
-            yield {
-                key: includeKey && rawItem.key ? this.decodeKey(rawItem.key) : undefined,
-                value: rawItem.value,
-            };
-        }
-        exit();
-    }
-    /** @returns an iterator over keys */
-    *getKeys(q, txn) {
-        for (const item of this.getItems(q, txn, true, false)) {
-            if (!item.key)
-                break;
-            yield item.key;
-        }
-    }
-    /** @returns an iterator over values (each value as Buffer) */
-    *getValues(q, txn) {
-        for (const item of this.getItems(q, txn, false, true)) {
-            if (!item.value)
-                break;
-            yield item.value;
-        }
-    }
-    /** @returns an iterator over values (each value as string) */
-    *getStrings(q, txn) {
-        for (const value of this.getValues(q, txn)) {
-            yield value.toString();
-        }
-    }
-    /** @returns an iterator over values (each value as number) */
-    *getNumbers(q, txn) {
-        for (const value of this.getValues(q, txn)) {
-            yield value.readDoubleBE();
-        }
-    }
-    /** @returns an iterator over values (each value as boolean) */
-    *getBooleans(q, txn) {
-        for (const value of this.getValues(q, txn)) {
-            yield bufReadBoolean(value);
-        }
-    }
-    /** @returns an iterator over items (each item as DbItem<K, string>) */
-    *getStringItems(q, txn) {
-        for (const item of this.getItems(q, txn, true, true)) {
-            if (!(item.key || item.value))
-                break;
-            yield {
-                key: item.key,
-                value: item.value?.toString(),
-            };
-        }
-    }
-    /** @returns an iterator over items (each item as DbItem<K, number>) */
-    *getNumberItems(q, txn) {
-        for (const item of this.getItems(q, txn, true, true)) {
-            if (!(item.key || item.value))
-                break;
-            yield {
-                key: item.key,
-                value: item.value?.readDoubleBE(),
-            };
-        }
-    }
-    /** @returns an iterator over items (each item as DbItem<K, boolean>) */
-    *getBooleanItems(q, txn) {
-        for (const item of this.getItems(q, txn, true, true)) {
-            if (!(item.key || item.value))
-                break;
-            yield {
-                key: item.key,
-                value: item.value ? bufReadBoolean(item.value) : false,
-            };
-        }
-    }
-    /** @returns a count of items matching the given query */
-    getCount(q, txn) {
-        let count = 0;
-        for (const item of this.getItems(q, txn, false, false)) {
-            count++;
-        }
-        return count;
+    openCursor(txn) {
+        return new cursor_1.Cursor(this, txn);
     }
     /** Helper function for handling optional transaction argument */
     useTransaction(callback, txn) {
@@ -462,44 +321,11 @@ async function main() {
     db.put("a", "alpha", txn);
     db.put("b", "bravo", txn);
     db.put("c", "charlie", txn);
-    db.put("d", "delta", txn);
-    db.put("e", "echo", txn);
-    db.put("f", "foxtrot", txn);
-    db.put("g", "golf", txn);
+    const start = process.hrtime();
+    const c = db.getString("c", txn);
+    const diff = process.hrtime(start);
+    console.log({ c, diff });
     txn.commit();
-    const q = {
-        limit: 3,
-    };
-    for (const key of db.getKeys(q)) {
-        console.log({ key });
-    }
-    for (const value of db.getStrings(q)) {
-        console.log({ value });
-    }
-    for (const item of db.getItems(q)) {
-        console.log({
-            key: item.key,
-            value: item.value?.toString(),
-        });
-    }
-    const txn2 = env.beginTxn();
-    db.put("x", true, txn2);
-    db.put("y", false, txn2);
-    db.put("z", true, txn2);
-    console.log(Array.from(db.getBooleanItems({ start: "x", end: "z" }, txn2)));
-    db.put("n1", 1, txn2);
-    db.put("n2", 2, txn2);
-    db.put("n3", 3, txn2);
-    console.log(Array.from(db.getNumberItems({ start: "n", limit: 3 }, txn2)));
-    let start = process.hrtime();
-    const count = db.getCount({}, txn2);
-    let diff = process.hrtime(start);
-    console.log({ count, diff });
-    start = process.hrtime();
-    const all = Array.from(db.getItems({}, txn2));
-    diff = process.hrtime(start);
-    console.log({ all, diff });
-    txn2.abort();
     db.close();
     env.close();
 }

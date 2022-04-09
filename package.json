@@ -5,7 +5,11 @@
   },
   "scripts": {
     "prestart": "tsc",
-    "start": "node --enable-source-maps ./dist/database.js",
+    "start": "node --enable-source-maps ./dist/start.js",
+    "database": "tsc && node --enable-source-maps ./dist/database.js",
+    "cursor": "tsc && node --enable-source-maps ./dist/cursor.js",
+    "worker": "tsc && node --enable-source-maps ./dist/worker.js",
+    "doit": "tsc && node --enable-source-maps ./dist/doit.js",
     "pretest": "tsc",
     "test": "node ./test/test_binding.js"
   },

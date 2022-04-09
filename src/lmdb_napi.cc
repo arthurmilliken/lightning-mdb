@@ -433,7 +433,6 @@ Value lmdb_dbi_flags(const CallbackInfo& info) {
 }
 
 void lmdb_dbi_close(const CallbackInfo& info) {
-  Env env = info.Env();
   MDB_env *dbenv = unwrap_env(info[0]);
   MDB_dbi dbi = unwrap_dbi(info[1]);
   mdb_dbi_close(dbenv, dbi);
@@ -601,7 +600,13 @@ Value lmdb_cursor_dbi(const CallbackInfo& info) {
 /**
  * @brief Retrieve by cursor.
  * 
- * @param info [params: CursorGetParams]
+ * @param info [{ cursorp: bigint;
+ *                op: CursorOp;
+ *                key?: Buffer;
+ *                value?: Buffer;
+ *                includeKey?: boolean;
+ *                includeValue?: boolean;
+ *                zeroCopy?: boolean; }]
  * @return Object { key?: Buffer, value?: Buffer}, or null if MDB_NOTFOUND
  */
 Value lmdb_cursor_get(const CallbackInfo& info) {
@@ -646,28 +651,63 @@ Value lmdb_cursor_get(const CallbackInfo& info) {
   return result;
 }
 
+// Helper macros for CURSOR_PUT operations
+#define CURSOR_PUT_PREAMBLE_WITH_ERROR_TYPE(...) \
+  Env env = info.Env(); \
+  Object params = info[0].As<Object>(); \
+  MDB_cursor *cursor = unwrap_cursor(params.Get("cursorp")); \
+  MDB_val key = unwrap_val(params.Get("key")); \
+  size_t maxkeysize = mdb_env_get_maxkeysize(mdb_txn_env(mdb_cursor_txn(cursor))); \
+  if (key.mv_size > maxkeysize) { \
+    char msg[50]; \
+    sprintf(msg, "Key is longer than max keysize %zu bytes", maxkeysize); \
+    RangeError::New(env, msg).ThrowAsJavaScriptException(); \
+    return __VA_ARGS__; \
+  }
+
+#define DEBUG_PRINT_CURSOR_PUT() \
+  DEBUG_PRINT(("mdb_cursor_put(%p, %p, %p, 0x%x): %d\n", cursor, &key, &data, flags, rc)); \
+  DEBUG_PRINT(("- key : %p (%zu bytes)\n", key.mv_data, key.mv_size)); \
+  DEBUG_PRINT(("- data: %p (%zu bytes)\n", data.mv_data, data.mv_size))
+
 /**
  * @brief Store by cursor.
- * 
  * @param info [{ cursorp: bigint;
  *                key: Buffer;
  *                value: Buffer;
  *                flags: number; }] */
 void lmdb_cursor_put(CallbackInfo& info) {
-  Env env = info.Env();
-  Object params = info[0].As<Object>();
-  MDB_cursor *cursor = unwrap_cursor(params.Get("cursorp"));
-  MDB_val key = unwrap_val(params.Get("key"));
+  CURSOR_PUT_PREAMBLE_WITH_ERROR_TYPE();
   MDB_val data = unwrap_val(params.Get("value"));
   unsigned int flags = 0;
   if (params.Get("flags").IsNumber()) {
     flags = params.Get("flags").As<Number>().Int32Value();
   }
   int rc = mdb_cursor_put(cursor, &key, &data, flags);
-  DEBUG_PRINT(("mdb_cursor_put(%p, %p, %p, 0x%x): %d\n", cursor, &key, &data, flags, rc));
-  DEBUG_PRINT(("- key : %p (%zu bytes)\n", key.mv_data, key.mv_size));
-  DEBUG_PRINT(("- data: %p (%zu bytes)\n", data.mv_data, data.mv_size));
+  DEBUG_PRINT_CURSOR_PUT();
   if (rc) return throw_void(env, rc);
+}
+
+/**
+ * @brief call mdb_cursor_put with MDB_RESERVE flag
+ * @param info [{ cursor: bigint;
+ *                key: Buffer;
+ *                value: Buffer;
+ *                flags?: number; }]
+ * @return Value empty buffer to be filled in by caller before end of transaction.
+ */
+Value lmdb_cursor_reserve(CallbackInfo& info) {
+  CURSOR_PUT_PREAMBLE_WITH_ERROR_TYPE(env.Undefined());
+  MDB_val data;
+  data.mv_size = (size_t) params.Get("size").As<Number>().Int64Value();
+  unsigned int flags = MDB_RESERVE;
+  if (params.Get("flags").IsNumber()) {
+    flags |= params.Get("flags").As<Number>().Int32Value();
+  }
+  int rc = mdb_cursor_put(cursor, &key, &data, flags);
+  DEBUG_PRINT_CURSOR_PUT();
+  if (rc) return throw_undefined(env, rc);
+  return buffer_from_val(env, &data, true);
 }
 
 void lmdb_cursor_del(CallbackInfo& info) {
@@ -792,6 +832,7 @@ Object Init(Env env, Object exports) {
   exports.Set(String::New(env, "cursor_dbi"), Function::New(env, lmdb_cursor_dbi));
   exports.Set(String::New(env, "cursor_get"), Function::New(env, lmdb_cursor_get));
   exports.Set(String::New(env, "cursor_put"), Function::New(env, lmdb_cursor_put));
+  exports.Set(String::New(env, "cursor_reserve"), Function::New(env, lmdb_cursor_reserve));
   exports.Set(String::New(env, "cursor_del"), Function::New(env, lmdb_cursor_del));
   exports.Set(String::New(env, "cursor_count"), Function::New(env, lmdb_cursor_count));
   exports.Set(String::New(env, "cmp"), Function::New(env, lmdb_cmp));
