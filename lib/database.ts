@@ -7,20 +7,20 @@ import { isMainThread } from "worker_threads";
 import { openEnv } from "./environment";
 import { Cursor } from "./cursor";
 
-interface SerializedDB {
+export interface SerializedDB {
   envp: bigint /** Address of MDB_env pointer */;
   dbi: number /** MDB_dbi handle */;
   keyType: KeyType /** Type for database keys */;
 }
 
 export class Database<K extends Key = string> {
-  /**
-   * Use this method to create a Database for use in a Worker Thread
+  /** Create a Database from a serialized representation
    * @param serialized created by Database.serialize()
-   * @returns Database
-   */
-  static deserialize(serialized: SerializedDB): Database {
-    return new Database(serialized);
+   * @returns Database<K> */
+  static deserialize<K extends Key = string>(
+    serialized: SerializedDB
+  ): Database<K> {
+    return new Database<K>(serialized);
   }
 
   protected _isOpen = false;
@@ -58,7 +58,7 @@ export class Database<K extends Key = string> {
     options?: DbOptions
   );
   /**
-   * Open a Database from a serialized representation
+   * Create a Database from a serialized representation
    * @param serialized
    */
   constructor(serialized: SerializedDB);
@@ -76,9 +76,9 @@ export class Database<K extends Key = string> {
       }
       const envp = <bigint>arg0;
       name = name || null;
-      const _flags = options ? calcDbFlags(options) : 0;
+      const flags = options ? calcDbFlags(options) : 0;
       if (!txn) throw new Error("Transaction is required");
-      this._dbi = lmdb.dbi_open(txn.txnp, name, _flags);
+      this._dbi = lmdb.dbi_open(txn.txnp, name, flags);
       this._envp = envp;
       this._keyType = options?.keyType || "string";
     } else {
@@ -103,13 +103,14 @@ export class Database<K extends Key = string> {
     }, txn);
   }
 
-  flags(txn?: Transaction): DbOptions {
+  getOptions(txn?: Transaction): DbOptions {
     this.assertOpen();
     return this.useTransaction((useTxn) => {
-      const _flags = lmdb.dbi_flags(useTxn.txnp, this._dbi);
+      const flags = lmdb.dbi_flags(useTxn.txnp, this._dbi);
       return {
-        create: _flags & DbFlag.CREATE ? true : false,
-        reverseKey: _flags & DbFlag.REVERSEKEY ? true : false,
+        keyType: this.keyType,
+        create: flags & DbFlag.CREATE ? true : false,
+        reverseKey: flags & DbFlag.REVERSEKEY ? true : false,
       };
     }, txn);
   }
@@ -136,13 +137,13 @@ export class Database<K extends Key = string> {
 
   /**
    * Get item from database.
-   * @param key
-   * @param txn
+   * @param key the key under which the item is stored
+   * @param txn an open Transaction (optional)
    * @param zeroCopy if true, returned Buffer is created using zero-copy
    *        semantics. This buffer must be detached by calling detachBuffer()
    *        before the end of the transaction, and before attempting any other
-   *        operation involving the same key. This also applies to code being
-   *        run in other threads. Use with caution.
+   *        operation involving the same key, even if that operation is being
+   *        run in a separate thread. Use with caution.
    * @returns Buffer of data item
    */
   get(key: K, txn?: Transaction, zeroCopy = false): Buffer {
@@ -211,7 +212,7 @@ export class Database<K extends Key = string> {
     });
   }
 
-  putAsync(key: K, value: Value): Promise<Buffer | null> {
+  putAsync(key: K, value: Value, flags?: PutFlags): Promise<void> {
     throw new Error("Method not implemented.");
   }
 
@@ -249,7 +250,7 @@ export class Database<K extends Key = string> {
   del(key: K, txn: Transaction): void {
     this.assertOpen();
     const keyBuf = this.encodeKey(key);
-    lmdb.del(txn.txnp, this._dbi, keyBuf);
+    lmdb.del({ txnp: txn.txnp, dbi: this._dbi, key: keyBuf });
   }
 
   delAsync(key: K): Promise<void> {

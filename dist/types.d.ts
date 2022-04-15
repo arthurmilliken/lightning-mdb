@@ -55,14 +55,14 @@ export interface EnvFlags {
 export interface DbOptions {
     /** create DB if not already existing */
     create?: boolean;
-    /** use reverse string keys (compare final byte first) */
+    /** if true, keys are strings to be compared in reverse order, from the end
+     * of the strings to the beginning. */
     reverseKey?: boolean;
     /** database keys must be of this type (default: "string") */
     keyType?: KeyType;
 }
 export interface DbStat {
-    pageSize: number /** Size of a database page.
-    This is currently the same for all databases. */;
+    pageSize: number /** Size of a database page. This is the same for all databases. */;
     depth: number /** Depth (height) of the B-tree */;
     branchPages: number /** Number of internal (non-leaf) pages */;
     leafPages: number /** Number of leaf pages */;
@@ -101,46 +101,44 @@ export interface PutFlags {
      * in the database */
     noOverwrite?: boolean;
 }
-export interface CursorPutFlags extends PutFlags {
+export interface CursorFlags extends PutFlags {
     current?: boolean;
 }
 export interface MultimapOptions extends DbOptions {
     /** sorted dup items have fixed size */
     dupFixed?: boolean;
-    /** dups are integerKey-style integers */
-    integerDup?: boolean;
     /** use reverse string dups */
     reverseDup?: boolean;
+    valueType?: KeyType;
 }
-export interface MultimapPutFlags extends CursorPutFlags {
-    /** For put: don't write if the key and data pair already exist.<br>
-     * For mdb_cursor_del: remove all duplicate data items. */
+export interface MultimapPutFlags extends PutFlags {
+    /** Throw MDB_KEYEXIST if the key and data pair already exists. */
     noDupData?: boolean;
     /** Duplicate data is being appended, don't split full pages. */
     appendDup?: boolean;
-    /** Store multiple data items in one call. Only for #MDB_DUPFIXED. */
-    multiple?: boolean;
 }
-export interface Multimap<K extends Key = string, V extends Key = string> extends Database<K> {
-    getFlags(txn?: Transaction): MultimapOptions;
+export interface MultimapCursorFlags extends MultimapPutFlags, CursorFlags {
+}
+export interface IMultimap<K extends Key = string, V extends Key = string> extends Database<K> {
+    getOptions(txn?: Transaction): MultimapOptions;
     put(key: K, value: V, txn: Transaction, flags?: MultimapPutFlags): Buffer | null;
-    putAsync(key: K, value: V, flags?: MultimapPutFlags): Promise<Buffer | null>;
+    putAsync(key: K, value: V, flags?: MultimapPutFlags): Promise<void>;
     delDup(key: K, value: V, txn: Transaction): void;
     delDupAsync(key: K, value: V): Promise<void>;
     compareValues(a: V, b: V): number;
 }
-export interface MultimapCursor<K extends Key = string, V extends Key = string> extends Cursor<K> {
-    firstDup(): IEntry<K> | null;
-    findDup(key: K, value: V): IEntry<K> | null;
-    findNextDup(key: K, value: V): IEntry<K> | null;
-    currentPage(): IEntry<K>[] | null;
-    lastDup(): IEntry<K> | null;
-    nextDup(): IEntry<K> | null;
-    nextPage(): IEntry<K>[] | null;
-    nextKey(): IEntry<K> | null;
-    prevDup(): IEntry<K> | null;
-    prevKey(): IEntry<K> | null;
-    prevPage(): IEntry<K>[] | null;
+export interface IMultimapCursor<K extends Key = string, V extends Key = string> extends Cursor<K> {
+    firstDup(): boolean;
+    findDup(key: K, value: V): boolean;
+    findNextDup(key: K, value: V): boolean;
+    currentPage(): boolean;
+    lastDup(): boolean;
+    nextDup(): boolean;
+    nextPage(): boolean;
+    nextKey(): boolean;
+    prevDup(): boolean;
+    prevKey(): boolean;
+    prevPage(): boolean;
 }
 export interface MultimapQuery<K extends Key = string, V extends Key = string> extends Query<K> {
     noDups?: boolean /** iterate unique keys only */;

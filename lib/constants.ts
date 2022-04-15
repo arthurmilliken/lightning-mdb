@@ -1,3 +1,5 @@
+export const itemNotFound = "Item not found";
+
 export const MDB_CP_COMPACT = 0x01;
 export const MDB_RDONLY = 0x20000;
 

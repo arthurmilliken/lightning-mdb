@@ -40,9 +40,9 @@ class Cursor {
             flags: _flags,
         });
     }
-    /** Reserve space at `key`, move cursor to position of `key`, and return
-     * an initialized Buffer which the caller can fill in before the end of
-     * the transaction */
+    /** Reserve `size` bytes at `key`, move cursor to position of `key`, and
+     * return an initialized Buffer which the caller can fill in before the
+     * end of the transaction */
     reserve(key, size, flags) {
         this.assertOpen();
         const _flags = (flags?.append ? constants_1.PutFlag.APPEND : 0) +
@@ -60,6 +60,7 @@ class Cursor {
         this.assertOpen();
         binding_1.lmdb.cursor_del(this._cursorp);
     }
+    /** @returns current key as Buffer */
     keyBuffer() {
         this.assertOpen();
         const result = binding_1.lmdb.cursor_get({
@@ -71,9 +72,11 @@ class Cursor {
             throw new Error(notFound);
         return result.key;
     }
+    /** @returns current key */
     key() {
         return this.db.decodeKey(this.keyBuffer());
     }
+    /** @returns current value as Buffer */
     value(zeroCopy = false) {
         this.assertOpen();
         const result = binding_1.lmdb.cursor_get({
@@ -115,13 +118,15 @@ class Cursor {
             value: result.value,
         };
     }
+    /** @returns {CursorItem<K, Buffer>} at current cursor position */
     item(includeValue = true, zeroCopy = false) {
-        const bufItem = this.rawItem(includeValue, zeroCopy);
+        const bufItem = this.rawItem(true, includeValue, zeroCopy);
         return {
             key: bufItem.key ? this.db.decodeKey(bufItem.key) : undefined,
             value: bufItem.value,
         };
     }
+    /** @returns {DbItem<K, string>} at current cursor position */
     stringItem() {
         const item = this.item();
         return {
@@ -129,6 +134,7 @@ class Cursor {
             value: item.value?.toString(),
         };
     }
+    /** @returns {DbItem<K, number>} at current cursor position */
     numberItem() {
         const item = this.item();
         return {
@@ -136,6 +142,7 @@ class Cursor {
             value: item.value?.readDoubleBE(),
         };
     }
+    /** @returns {DbItem<K, boolean>} at current cursor position */
     booleanItem() {
         const item = this.item();
         return {
@@ -143,6 +150,8 @@ class Cursor {
             value: item.value?.readUInt8() ? true : false,
         };
     }
+    /** Move the cursor to the first key in database
+     * @returns false if no key found, true otherwise */
     first() {
         this.assertOpen();
         const result = binding_1.lmdb.cursor_get({
@@ -154,6 +163,9 @@ class Cursor {
         else
             return true;
     }
+    /** Move the cursor to the previous key
+     * @param skip number of keys to skip
+     * @returns false if no key found, true otherwise */
     prev(skip = 0) {
         this.assertOpen();
         while (skip-- >= 0) {
@@ -166,6 +178,9 @@ class Cursor {
         }
         return true;
     }
+    /** Move the cursor to the next key
+     * @param skip number of keys to skip
+     * @returns false if no key found, true otherwise */
     next(skip = 0) {
         this.assertOpen();
         while (skip-- >= 0) {
@@ -178,6 +193,8 @@ class Cursor {
         }
         return true;
     }
+    /** Move the cursor to the last key in database
+     * @returns false if no key found, true otherwise */
     last() {
         this.assertOpen();
         const result = binding_1.lmdb.cursor_get({
@@ -189,6 +206,9 @@ class Cursor {
         else
             return true;
     }
+    /** Move the cursor to given key. If key does not exist, this function
+     * will move the cursor to the next adjacent key and return false.
+     * @returns true if key exists, false otherwise */
     find(key) {
         this.assertOpen();
         const result = binding_1.lmdb.cursor_get({
@@ -201,6 +221,8 @@ class Cursor {
         else
             return true;
     }
+    /** Move the cursor to given key or next adjacent key
+     * @returns false if no key found, true otherwise */
     findNext(key) {
         this.assertOpen();
         const result = binding_1.lmdb.cursor_get({
@@ -217,6 +239,7 @@ class Cursor {
         if (!this.isOpen)
             throw new Error("Cursor is already closed");
     }
+    /** Close this cursor. This must be called on all read-only cursors. */
     close() {
         if (!this.isOpen)
             return;
@@ -226,6 +249,7 @@ class Cursor {
         }
         this._isOpen = false;
     }
+    /** Re-use a closed cursor with the given transaction. */
     renew(txn) {
         if (this.isOpen) {
             this.close();
@@ -233,7 +257,7 @@ class Cursor {
         binding_1.lmdb.cursor_renew(txn.txnp, this.cursorp);
         this._isOpen = true;
     }
-    /** @returns an iterator over items (each item as DbItem<K, Buffer>) */
+    /** @returns an iterator over items (each item as CursorItem<K, Buffer>) */
     *getCursorItems(q, includeKey = true, includeValue = true) {
         // Set up navigation functions, based on q.reverse
         let first = q?.reverse ? this.last.bind(this) : this.first.bind(this);
@@ -291,7 +315,7 @@ class Cursor {
             };
         }
     }
-    /** @returns an iterator over keys */
+    /** @returns an iterator over items (each item as DbItem<K, Buffer>) */
     *getItems(q) {
         for (const item of this.getCursorItems(q, true, true)) {
             if (!item.key || !item.value)
@@ -360,7 +384,8 @@ class Cursor {
             };
         }
     }
-    /** @returns a count of items matching the given query */
+    /** @returns a count of items matching the given query, or all items if
+     * no query given */
     getCount(q) {
         let count = 0;
         for (const item of this.getCursorItems(q, false, false)) {

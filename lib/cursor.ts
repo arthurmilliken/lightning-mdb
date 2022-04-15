@@ -1,27 +1,17 @@
 import { lmdb } from "./binding";
-import { CursorOp, PutFlag } from "./constants";
+import { CursorOp, itemNotFound, PutFlag } from "./constants";
 import { bufReadBoolean, Database } from "./database";
 import { openEnv } from "./environment";
 import { Transaction } from "./transaction";
-import {
-  CursorItem,
-  CursorPutFlags,
-  DbItem,
-  Key,
-  PutFlags,
-  Query,
-  Value,
-} from "./types";
-
-const notFound = "Item not found";
+import { CursorItem, CursorFlags, DbItem, Key, Query, Value } from "./types";
 
 export class Cursor<K extends Key = string> implements Cursor<K> {
-  private _cursorp: bigint;
+  protected _cursorp: bigint;
   get cursorp(): bigint {
     return this._cursorp;
   }
-  private txn: Transaction;
-  private db: Database<K>;
+  protected txn: Transaction;
+  protected db: Database<K>;
   protected _isOpen = true;
   get isOpen() {
     return this._isOpen;
@@ -39,7 +29,7 @@ export class Cursor<K extends Key = string> implements Cursor<K> {
 
   /** Store `value` at `key`, and move the cursor to the position of the
    * inserted record */
-  put(key: K, value: Value, flags?: CursorPutFlags): void {
+  put(key: K, value: Value, flags?: CursorFlags): void {
     this.assertOpen();
     const _flags =
       (flags?.append ? PutFlag.APPEND : 0) +
@@ -53,10 +43,17 @@ export class Cursor<K extends Key = string> implements Cursor<K> {
     });
   }
 
-  /** Reserve `size` bytes at `key`, move cursor to position of `key`, and
+  /**
+   * Reserve `size` bytes at `key`, move cursor to position of `key`, and
    * return an initialized Buffer which the caller can fill in before the
-   * end of the transaction */
-  reserve(key: K, size: number, flags?: CursorPutFlags): Buffer {
+   * end of the transaction
+   * @param key the key where the data will be inserted
+   * @param size the size (in bytes) of the entry to reserve
+   * @param {CursorFlags} flags
+   * @returns an initialized Buffer, the contents of which will be persisted
+   *          in the database when the transaction is committed
+   */
+  reserve(key: K, size: number, flags?: CursorFlags): Buffer {
     this.assertOpen();
     const _flags =
       (flags?.append ? PutFlag.APPEND : 0) +
@@ -84,7 +81,7 @@ export class Cursor<K extends Key = string> implements Cursor<K> {
       op: CursorOp.GET_CURRENT,
       includeKey: true,
     });
-    if (!result || !result.key) throw new Error(notFound);
+    if (!result || !result.key) throw new Error(itemNotFound);
     return result.key;
   }
 
@@ -102,7 +99,7 @@ export class Cursor<K extends Key = string> implements Cursor<K> {
       includeValue: true,
       zeroCopy,
     });
-    if (!result?.value) throw new Error(notFound);
+    if (!result?.value) throw new Error(itemNotFound);
     return <Buffer>result.value;
   }
 
@@ -110,16 +107,30 @@ export class Cursor<K extends Key = string> implements Cursor<K> {
   asString(): string {
     return this.value().toString();
   }
+
   /** @returns current value as number */
   asNumber(): number {
     return this.value().readDoubleBE();
   }
+
   /** @returns current value as boolean */
   asBoolean(): boolean {
     return this.value().readUInt8() ? true : false;
   }
 
-  /** @returns current key (as Buffer) and value (as Buffer) */
+  /**
+   * Fetch key and value data as Buffer objects
+   * @param includeKey if false, the `key` property of the returned CursorItem
+   *        will be undefined (default: true)
+   * @param includeValue if false, the `value` property of the returned CursorItem
+   *        will be undefined (default: true)
+   * @param zeroCopy if true, returned `value` Buffer is created using zero-copy
+   *        semantics. This buffer must be detached by calling detachBuffer()
+   *        before the end of the transaction, and before attempting any other
+   *        operation involving the same key, even if that operation is being
+   *        run in a separate thread. Use with caution.
+   * @returns {CursorItem<Buffer, Buffer>}
+   */
   rawItem(
     includeKey = true,
     includeValue = true,
@@ -133,16 +144,26 @@ export class Cursor<K extends Key = string> implements Cursor<K> {
       includeValue,
       zeroCopy,
     });
-    if (!result) throw new Error(notFound);
+    if (!result) throw new Error(itemNotFound);
     return {
       key: result.key,
       value: result.value,
     };
   }
 
-  /** @returns {CursorItem<K, Buffer>} at current cursor position */
+  /**
+   * Fetch data at cursor position as a cursor item
+   * @param includeValue if false, the `value` property of the returned CursorItem
+   *        will be undefined (default: true)
+   * @param zeroCopy if true, returned `value` Buffer is created using zero-copy
+   *        semantics. This buffer must be detached by calling detachBuffer()
+   *        before the end of the transaction, and before attempting any other
+   *        operation involving the same key, even if that operation is being
+   *        run in a separate thread. Use with caution.
+   * @returns {CursorItem<K, Buffer>} at current cursor position
+   */
   item(includeValue = true, zeroCopy = false): CursorItem<K, Buffer> {
-    const bufItem = this.rawItem(includeValue, zeroCopy);
+    const bufItem = this.rawItem(true, includeValue, zeroCopy);
     return {
       key: bufItem.key ? this.db.decodeKey(bufItem.key) : undefined,
       value: bufItem.value,
@@ -176,7 +197,7 @@ export class Cursor<K extends Key = string> implements Cursor<K> {
     };
   }
 
-  /** Move the cursor to the first key in database
+  /** Move the cursor to the first entry in database
    * @returns false if no key found, true otherwise */
   first(): boolean {
     this.assertOpen();
@@ -188,9 +209,9 @@ export class Cursor<K extends Key = string> implements Cursor<K> {
     else return true;
   }
 
-  /** Move the cursor to the previous key
-   * @param skip number of keys to skip
-   * @returns false if no key found, true otherwise */
+  /** Move the cursor to the previous entry
+   * @param skip number of entries to skip
+   * @returns false if no entry found, true otherwise */
   prev(skip = 0): boolean {
     this.assertOpen();
     while (skip-- >= 0) {
@@ -203,9 +224,9 @@ export class Cursor<K extends Key = string> implements Cursor<K> {
     return true;
   }
 
-  /** Move the cursor to the next key
-   * @param skip number of keys to skip
-   * @returns false if no key found, true otherwise */
+  /** Move the cursor to the next entry
+   * @param skip number of entries to skip
+   * @returns false if no entry found, true otherwise */
   next(skip = 0): boolean {
     this.assertOpen();
     while (skip-- >= 0) {
@@ -217,8 +238,9 @@ export class Cursor<K extends Key = string> implements Cursor<K> {
     }
     return true;
   }
-  /** Move the cursor to the last key in database
-   * @returns false if no key found, true otherwise */
+
+  /** Move the cursor to the last entry in database
+   * @returns false if no entry found, true otherwise */
   last(): boolean {
     this.assertOpen();
     const result = lmdb.cursor_get({
@@ -228,6 +250,7 @@ export class Cursor<K extends Key = string> implements Cursor<K> {
     if (!result) return false;
     else return true;
   }
+
   /** Move the cursor to given key. If key does not exist, this function
    * will move the cursor to the next adjacent key and return false.
    * @returns true if key exists, false otherwise */
@@ -241,6 +264,7 @@ export class Cursor<K extends Key = string> implements Cursor<K> {
     if (!result) return false;
     else return true;
   }
+
   /** Move the cursor to given key or next adjacent key
    * @returns false if no key found, true otherwise */
   findNext(key: K): boolean {

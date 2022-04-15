@@ -6,8 +6,9 @@
   "scripts": {
     "prestart": "tsc",
     "start": "node --enable-source-maps ./dist/start.js",
-    "database": "tsc && node --enable-source-maps ./dist/database.js",
     "cursor": "tsc && node --enable-source-maps ./dist/cursor.js",
+    "database": "tsc && node --enable-source-maps ./dist/database.js",
+    "multimap": "tsc && node --enable-source-maps ./dist/multimap.js",
     "worker": "tsc && node --enable-source-maps ./dist/worker.js",
     "doit": "tsc && node --enable-source-maps ./dist/doit.js",
     "pretest": "tsc",

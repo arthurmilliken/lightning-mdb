@@ -1,9 +1,0 @@
-{
-  "files.eol": "\n",
-  "files.associations": {
-    "*.ejs": "html",
-    "xutility": "cpp",
-    "tuple": "cpp",
-    "utility": "cpp"
-  }
-}

@@ -53,7 +53,12 @@ interface LMDB {
         size: number;
         flags: number;
     }): Buffer;
-    del(txnp: bigint, dbi: number, key: Buffer): void;
+    del(params: {
+        txnp: bigint;
+        dbi: number;
+        key: Buffer;
+        value?: Buffer;
+    }): void;
     cmp(txnp: bigint, dbi: number, a: Buffer, b: Buffer): number;
     detach_buffer(buf: Buffer): void;
     cursor_open(tnxp: bigint, dbi: number): bigint;

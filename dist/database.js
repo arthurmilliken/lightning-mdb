@@ -17,10 +17,10 @@ class Database {
             }
             const envp = arg0;
             name = name || null;
-            const _flags = options ? calcDbFlags(options) : 0;
+            const flags = options ? calcDbFlags(options) : 0;
             if (!txn)
                 throw new Error("Transaction is required");
-            this._dbi = binding_1.lmdb.dbi_open(txn.txnp, name, _flags);
+            this._dbi = binding_1.lmdb.dbi_open(txn.txnp, name, flags);
             this._envp = envp;
             this._keyType = options?.keyType || "string";
         }
@@ -32,11 +32,9 @@ class Database {
         }
         this._isOpen = true;
     }
-    /**
-     * Use this method to create a Database for use in a Worker Thread
+    /** Create a Database from a serialized representation
      * @param serialized created by Database.serialize()
-     * @returns Database
-     */
+     * @returns Database<K> */
     static deserialize(serialized) {
         return new Database(serialized);
     }
@@ -64,13 +62,14 @@ class Database {
             return binding_1.lmdb.stat(useTxn.txnp, this._dbi);
         }, txn);
     }
-    flags(txn) {
+    getOptions(txn) {
         this.assertOpen();
         return this.useTransaction((useTxn) => {
-            const _flags = binding_1.lmdb.dbi_flags(useTxn.txnp, this._dbi);
+            const flags = binding_1.lmdb.dbi_flags(useTxn.txnp, this._dbi);
             return {
-                create: _flags & constants_1.DbFlag.CREATE ? true : false,
-                reverseKey: _flags & constants_1.DbFlag.REVERSEKEY ? true : false,
+                keyType: this.keyType,
+                create: flags & constants_1.DbFlag.CREATE ? true : false,
+                reverseKey: flags & constants_1.DbFlag.REVERSEKEY ? true : false,
             };
         }, txn);
     }
@@ -92,13 +91,13 @@ class Database {
     }
     /**
      * Get item from database.
-     * @param key
-     * @param txn
+     * @param key the key under which the item is stored
+     * @param txn an open Transaction (optional)
      * @param zeroCopy if true, returned Buffer is created using zero-copy
      *        semantics. This buffer must be detached by calling detachBuffer()
      *        before the end of the transaction, and before attempting any other
-     *        operation involving the same key. This also applies to code being
-     *        run in other threads. Use with caution.
+     *        operation involving the same key, even if that operation is being
+     *        run in a separate thread. Use with caution.
      * @returns Buffer of data item
      */
     get(key, txn, zeroCopy = false) {
@@ -161,7 +160,7 @@ class Database {
             flags: _flags,
         });
     }
-    putAsync(key, value) {
+    putAsync(key, value, flags) {
         throw new Error("Method not implemented.");
     }
     /**
@@ -196,7 +195,7 @@ class Database {
     del(key, txn) {
         this.assertOpen();
         const keyBuf = this.encodeKey(key);
-        binding_1.lmdb.del(txn.txnp, this._dbi, keyBuf);
+        binding_1.lmdb.del({ txnp: txn.txnp, dbi: this._dbi, key: keyBuf });
     }
     delAsync(key) {
         throw new Error("Method not implemented.");

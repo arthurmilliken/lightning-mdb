@@ -1,6 +1,7 @@
 import { Transaction } from "./transaction";
 import { Database } from "./database";
-import { DbOptions, DbStat, EnvFlags, EnvInfo, EnvOptions, Key, Version } from "./types";
+import { DbOptions, DbStat, EnvFlags, EnvInfo, EnvOptions, Key, MultimapOptions, Version } from "./types";
+import { Multimap } from "./multimap";
 export declare class Environment {
     /**
      * Use this method to create an Environment for use in a Worker Thread
@@ -19,8 +20,18 @@ export declare class Environment {
      *          Environment#deserialize()
      */
     serialize(): bigint;
+    /** @returns the LMDB library version information. */
     version(): Version;
+    /** @returns a string describing the given error code. */
     strerror(code: number): string;
+    /**
+     * Open an Environment.
+     * @param path The directory in which the database files reside. This
+     *        directory must already exist and be writable.
+     * @param {EnvOptions} options Special options for this environment.
+     * @param mode The UNIX permissions to set on created files and semaphores.
+     *        This parameter is ignored on Windows.
+     */
     open(path: string, options?: EnvOptions, mode?: number): void;
     copy(path: string, compact?: boolean): void;
     copyAsync(): Promise<void>;
@@ -44,8 +55,14 @@ export declare class Environment {
      * @returns number of stale slots that were cleared. */
     readerCheck(): number;
     openDB<K extends Key = string>(name: string | null, options?: DbOptions, txn?: Transaction): Database<K>;
+    openMultimap<K extends Key = string, V extends Key = string>(name: string, options?: MultimapOptions, txn?: Transaction): Multimap<K, V>;
 }
+/** @returns the LMDB library version information. */
 export declare function version(): Version;
+/**
+ * @param code
+ * @returns a string describing a given error code.
+ */
 export declare function strerror(code: number): string;
 /**
  * Create and open an LMDB environment.

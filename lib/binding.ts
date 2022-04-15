@@ -49,6 +49,14 @@ interface LMDB {
     value: Buffer;
     flags: number;
   }): void;
+  put_multiple(params: {
+    txnp: bigint;
+    dbi: number;
+    key: Buffer;
+    values: Buffer;
+    bytesPerValue: number;
+    flags: number;
+  }): void;
   reserve(params: {
     txnp: bigint;
     dbi: number;
@@ -56,7 +64,7 @@ interface LMDB {
     size: number;
     flags: number;
   }): Buffer;
-  del(txnp: bigint, dbi: number, key: Buffer): void;
+  del(params: { txnp: bigint; dbi: number; key: Buffer; value?: Buffer }): void;
   cmp(txnp: bigint, dbi: number, a: Buffer, b: Buffer): number;
   detach_buffer(buf: Buffer): void;
 
@@ -76,13 +84,13 @@ interface LMDB {
     cursorp: bigint;
     key: Buffer;
     value: Buffer;
-    flags?: number;
+    flags: number;
   }): void;
   cursor_reserve(params: {
     cursorp: bigint;
     key: Buffer;
     size: number;
-    flags?: number;
+    flags: number;
   }): Buffer;
   cursor_del(cursorp: bigint, flags?: number): void;
 }

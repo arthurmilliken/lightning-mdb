@@ -3,18 +3,16 @@ import { Transaction } from "./transaction";
 import { Key, KeyType, Value, PutFlags, DbOptions, DbStat } from "./types";
 import { Buffer } from "buffer";
 import { Cursor } from "./cursor";
-interface SerializedDB {
+export interface SerializedDB {
     envp: bigint /** Address of MDB_env pointer */;
     dbi: number /** MDB_dbi handle */;
     keyType: KeyType /** Type for database keys */;
 }
 export declare class Database<K extends Key = string> {
-    /**
-     * Use this method to create a Database for use in a Worker Thread
+    /** Create a Database from a serialized representation
      * @param serialized created by Database.serialize()
-     * @returns Database
-     */
-    static deserialize(serialized: SerializedDB): Database;
+     * @returns Database<K> */
+    static deserialize<K extends Key = string>(serialized: SerializedDB): Database<K>;
     protected _isOpen: boolean;
     get isOpen(): boolean;
     protected _keyType: KeyType;
@@ -33,27 +31,27 @@ export declare class Database<K extends Key = string> {
      */
     constructor(envp: bigint, name: string | null, txn: Transaction, options?: DbOptions);
     /**
-     * Open a Database from a serialized representation
+     * Create a Database from a serialized representation
      * @param serialized
      */
     constructor(serialized: SerializedDB);
     /** Create serialization token for use with Worker Thread */
     serialize(): SerializedDB;
     stat(txn?: Transaction): DbStat;
-    flags(txn?: Transaction): DbOptions;
+    getOptions(txn?: Transaction): DbOptions;
     close(): void;
     drop(txn: Transaction, del?: boolean): void;
     clear(txn: Transaction): void;
     dropAsync(del?: boolean): void;
     /**
      * Get item from database.
-     * @param key
-     * @param txn
+     * @param key the key under which the item is stored
+     * @param txn an open Transaction (optional)
      * @param zeroCopy if true, returned Buffer is created using zero-copy
      *        semantics. This buffer must be detached by calling detachBuffer()
      *        before the end of the transaction, and before attempting any other
-     *        operation involving the same key. This also applies to code being
-     *        run in other threads. Use with caution.
+     *        operation involving the same key, even if that operation is being
+     *        run in a separate thread. Use with caution.
      * @returns Buffer of data item
      */
     get(key: K, txn?: Transaction, zeroCopy?: boolean): Buffer;
@@ -80,7 +78,7 @@ export declare class Database<K extends Key = string> {
      * @param txn an open writable transaction
      * @param {PutFlags} flags */
     put(key: K, value: Value, txn: Transaction, flags?: PutFlags): void;
-    putAsync(key: K, value: Value): Promise<Buffer | null>;
+    putAsync(key: K, value: Value, flags?: PutFlags): Promise<void>;
     /**
      * Reserve space inside the database at the current key, and return a Buffer
      * which the caller can fill in before the transaction ends.
@@ -121,4 +119,3 @@ export declare function detachBuffer(buf: Buffer): void;
 export declare function assertUSafe(num: number): void;
 export declare function bufWriteBoolean(buf: Buffer, val: boolean, offset?: number): void;
 export declare function bufReadBoolean(buf: Buffer, offset?: number): boolean;
-export {};

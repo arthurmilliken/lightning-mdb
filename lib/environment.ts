@@ -10,8 +10,11 @@ import {
   EnvInfo,
   EnvOptions,
   Key,
+  MultimapOptions,
+  Value,
   Version,
 } from "./types";
+import { Multimap } from "./multimap";
 const { isMainThread } = require("worker_threads");
 const { mkdir } = require("fs/promises");
 
@@ -40,12 +43,15 @@ export class Environment {
       this.envp = lmdb.env_create();
     }
   }
+
   get isOpen(): boolean {
     return this._isOpen;
   }
+
   private assertOpen(): void {
     if (!this.isOpen) throw new Error("This Environment is already closed.");
   }
+
   /**
    * Serialize this Environment so that it can be passed to Worker Threads.
    * @returns a token which can be converted into an Environment using
@@ -55,12 +61,25 @@ export class Environment {
     this.assertOpen();
     return this.envp;
   }
+
+  /** @returns the LMDB library version information. */
   version(): Version {
     return version();
   }
+
+  /** @returns a string describing the given error code. */
   strerror(code: number): string {
     return strerror(code);
   }
+
+  /**
+   * Open an Environment.
+   * @param path The directory in which the database files reside. This
+   *        directory must already exist and be writable.
+   * @param {EnvOptions} options Special options for this environment.
+   * @param mode The UNIX permissions to set on created files and semaphores.
+   *        This parameter is ignored on Windows.
+   */
   open(path: string, options?: EnvOptions, mode = 0o664): void {
     if (options?.mapSize) {
       this.setMapSize(options.mapSize);
@@ -72,44 +91,60 @@ export class Environment {
       lmdb.env_set_maxdbs(this.envp, options.maxDBs);
     }
     const flags = options ? calcEnvFlags(options) : 0;
-    lmdb.env_open(this.envp, path, flags, mode);
-    this._isOpen = true;
+    try {
+      lmdb.env_open(this.envp, path, flags, mode);
+      this._isOpen = true;
+    } catch (err) {
+      lmdb.env_close(this.envp);
+      throw err;
+    }
   }
+
   copy(path: string, compact?: boolean): void {
     this.assertOpen();
     const flags = compact ? MDB_CP_COMPACT : 0;
     lmdb.env_copy2(this.envp, path, flags);
   }
+
   copyAsync(): Promise<void> {
     throw new Error("Method not implemented.");
   }
+
   copyfd(fd: number, compact?: boolean): void {
     this.assertOpen();
     const flags = compact ? MDB_CP_COMPACT : 0;
     lmdb.env_copyfd2(this.envp, fd, flags);
   }
+
   copyfdAsync(): Promise<void> {
     throw new Error("Method not implemented.");
   }
+
   stat(): DbStat {
     this.assertOpen();
     return lmdb.env_stat(this.envp);
   }
+
   info(): EnvInfo {
     this.assertOpen();
     return lmdb.env_info(this.envp);
   }
+
   sync(force?: boolean): void {
     this.assertOpen();
     lmdb.env_sync(this.envp, force || false);
   }
+
   close(): void {
     this.assertOpen();
+    if (!isMainThread)
+      throw new Error("Environment can only be closed from the main thread.");
     const path = this.getPath();
     lmdb.env_close(this.envp);
     this._isOpen = false;
     delete environments[path];
   }
+
   setFlags(flags: EnvFlags): void {
     this.assertOpen();
     const flagsOn = calcEnvFlags(flags);
@@ -122,6 +157,7 @@ export class Environment {
     });
     lmdb.env_set_flags(this.envp, flagsOff, true);
   }
+
   getOptions(): EnvOptions {
     this.assertOpen();
     const flags = lmdb.env_get_flags(this.envp);
@@ -140,39 +176,48 @@ export class Environment {
       maxReaders: this.getMaxReaders(),
     };
   }
+
   getPath(): string {
     this.assertOpen();
     return lmdb.env_get_path(this.envp);
   }
+
   getfd(): number {
     this.assertOpen();
     return lmdb.env_get_fd(this.envp);
   }
+
   setMapSize(size: number): void {
     lmdb.env_set_mapsize(this.envp, size);
   }
+
   getMaxReaders(): number {
     this.assertOpen();
     return lmdb.env_get_maxreaders(this.envp);
   }
+
   getMaxKeySize(): number {
     this.assertOpen();
     return lmdb.env_get_maxkeysize(this.envp);
   }
+
   beginTxn(readOnly = false): Transaction {
     this.assertOpen();
     return new Transaction(this.envp, readOnly);
   }
+
   /** Dump the entries in the reader lock table. */
   readerList(): string[] {
     return lmdb.reader_list(this.envp);
   }
+
   /** Check for stale entries in the reader lock table.
    * @returns number of stale slots that were cleared. */
   readerCheck(): number {
     this.assertOpen();
     return lmdb.reader_check(this.envp);
   }
+
   openDB<K extends Key = string>(
     name: string | null,
     options?: DbOptions,
@@ -184,12 +229,29 @@ export class Environment {
     if (!txn) useTxn.commit();
     return db;
   }
+
+  openMultimap<K extends Key = string, V extends Key = string>(
+    name: string,
+    options?: MultimapOptions,
+    txn?: Transaction
+  ): Multimap<K, V> {
+    let useTxn = txn;
+    if (!useTxn) useTxn = new Transaction(this.envp);
+    const mm = new Multimap<K, V>(this.envp, name, useTxn, options);
+    if (!txn) useTxn.commit();
+    return mm;
+  }
 }
 
+/** @returns the LMDB library version information. */
 export function version(): Version {
   return lmdb.version();
 }
 
+/**
+ * @param code
+ * @returns a string describing a given error code.
+ */
 export function strerror(code: number): string {
   return lmdb.strerror(code);
 }

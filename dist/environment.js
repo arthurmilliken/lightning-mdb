@@ -6,6 +6,7 @@ const constants_1 = require("./constants");
 const path_1 = require("path");
 const transaction_1 = require("./transaction");
 const database_1 = require("./database");
+const multimap_1 = require("./multimap");
 const { isMainThread } = require("worker_threads");
 const { mkdir } = require("fs/promises");
 class Environment {
@@ -46,12 +47,22 @@ class Environment {
         this.assertOpen();
         return this.envp;
     }
+    /** @returns the LMDB library version information. */
     version() {
         return version();
     }
+    /** @returns a string describing the given error code. */
     strerror(code) {
         return strerror(code);
     }
+    /**
+     * Open an Environment.
+     * @param path The directory in which the database files reside. This
+     *        directory must already exist and be writable.
+     * @param {EnvOptions} options Special options for this environment.
+     * @param mode The UNIX permissions to set on created files and semaphores.
+     *        This parameter is ignored on Windows.
+     */
     open(path, options, mode = 0o664) {
         if (options?.mapSize) {
             this.setMapSize(options.mapSize);
@@ -63,8 +74,14 @@ class Environment {
             binding_1.lmdb.env_set_maxdbs(this.envp, options.maxDBs);
         }
         const flags = options ? calcEnvFlags(options) : 0;
-        binding_1.lmdb.env_open(this.envp, path, flags, mode);
-        this._isOpen = true;
+        try {
+            binding_1.lmdb.env_open(this.envp, path, flags, mode);
+            this._isOpen = true;
+        }
+        catch (err) {
+            binding_1.lmdb.env_close(this.envp);
+            throw err;
+        }
     }
     copy(path, compact) {
         this.assertOpen();
@@ -96,6 +113,8 @@ class Environment {
     }
     close() {
         this.assertOpen();
+        if (!isMainThread)
+            throw new Error("Environment can only be closed from the main thread.");
         const path = this.getPath();
         binding_1.lmdb.env_close(this.envp);
         this._isOpen = false;
@@ -173,12 +192,26 @@ class Environment {
             useTxn.commit();
         return db;
     }
+    openMultimap(name, options, txn) {
+        let useTxn = txn;
+        if (!useTxn)
+            useTxn = new transaction_1.Transaction(this.envp);
+        const mm = new multimap_1.Multimap(this.envp, name, useTxn, options);
+        if (!txn)
+            useTxn.commit();
+        return mm;
+    }
 }
 exports.Environment = Environment;
+/** @returns the LMDB library version information. */
 function version() {
     return binding_1.lmdb.version();
 }
 exports.version = version;
+/**
+ * @param code
+ * @returns a string describing a given error code.
+ */
 function strerror(code) {
     return binding_1.lmdb.strerror(code);
 }
